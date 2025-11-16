@@ -8,7 +8,7 @@
 #define MAXLABELS 124
 #define STACKSIZE 256
 typedef enum {IMM, REG, LABEL, NONE} OperandType;
-typedef enum {PSH, ADD, SUB, MUL, DIV, POP, SET, LOAD, HLT, LBL, JMP, JN, JNE, JG, JGE, JL, JLE, CMP, CALL, RET, OPCODE} Operations;
+typedef enum {PSH, ADD, SUB, MUL, DIV, POP, SET, LOAD, HLT, LBL, JMP, JE, JNE, JG, JGE, JL, JLE, CMP, CALL, RET, INC, DEC, OPCODE} Operations;
 typedef struct VM VM;
 typedef struct Instr Instr;
 typedef struct Label Label;
@@ -19,23 +19,22 @@ typedef struct Flags{
   bool zf; // is the result zero
 }Flags;
 
+typedef struct Operand{
+   OperandType type;
+    union{
+      int imm;
+      int reg;
+      const char* label;
+    } value;
+}Operand;
+
 typedef struct Instr{
+
   Operations ID;
-
-  OperandType operand1_type;
-    union{
-      int imm;
-      int reg;
-      const char* label;
-    } operand1;
-
-  OperandType operand2_type;
-    union{
-      int imm;
-      int reg;
-      const char* label;
-    } operand2;
+  Operand operand1;
+  Operand operand2;
   InstrFunc execute;
+
 } Instr;
 
 typedef enum {A, B, C, D, E, NUMOFREGS} Regs;
@@ -62,7 +61,7 @@ typedef struct VM {
 
 //helper function
 void label_parse(VM* vm, int program_size);
-int assess_operand(VM*vm, const Instr *instrc, bool isOperand1);
+int assess_operand(VM*vm, Operand op);
 //instruction
 void instr_psh(VM*vm, const Instr* instrc);
 void instr_add(VM*vm, const Instr* instrc);
@@ -84,6 +83,25 @@ void instr_jl(VM*vm, const Instr* instrc);
 void instr_jle(VM*vm, const Instr* instrc);
 void instr_call(VM*vm, const Instr* instrc);
 void instr_ret(VM*vm, const Instr* instrc);
+void instr_inc(VM*vm, const Instr* instrc);
+void instr_dec(VM*vm, const Instr* instrc);
 
+
+
+//ASSEMBLER ONLY DEFINITIONS
+
+typedef struct Instr_template{
+  Operations ID;
+  int min_operand;
+  int max_operand;
+  InstrFunc execute;
+} Instr_template;
+
+extern Instr_template lookup[];
+extern const char* operation_names[];
+
+extern int u_program_size;
+extern Instr *u_program;
+void define_program();
 #endif
 
