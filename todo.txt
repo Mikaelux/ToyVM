@@ -2,3 +2,8 @@
 incrementation method probably 
 	+ add instr_add capability to add directly into register value
 		(by subsequence, every other operation)
+- Edit files to make naming patterns consistent, and mkae helper file names more coeherent
+- fuzzer.
+- Error handle sys comaptible with the fuzzer
+
+quick adjustments (add mov and dup when I sit down somewhere)
