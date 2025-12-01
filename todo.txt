@@ -1,4 +1,3 @@
-- Currently loops are causing an issue, mainly because i dont have a ntive
-incrementation method probably 
-	+ add instr_add capability to add directly into register value
-		(by subsequence, every other operation)
+- Migrate label parsing to assembler.
+- Add errors to the main function for fuzz proofing
+- Begin work on fuzzer core
