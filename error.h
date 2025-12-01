@@ -1,0 +1,46 @@
+#ifndef ERROR_H
+#define ERROR_H
+
+typedef enum {
+    ERR_OK = 0,
+
+    // Assembler errors
+    ERR_SYNTAX,
+    ERR_UNKNOWN_OPCODE,
+    ERR_TOO_FEW_OPERANDS,
+    ERR_TOO_MANY_OPERANDS,
+    ERR_BAD_OPERAND_TYPE,
+    ERR_OPERAND_OUT_OF_RANGE,
+    ERR_DUPLICATE_LABEL,
+    ERR_UNRESOLVED_LABEL,
+    ERR_LABEL_FORMAT,
+    ERR_FILE_IO,
+    ERR_PROGRAM_TOO_LARGE,
+    ERR_TOO_MANY_LABELS,
+    ERR_ALLOC_FAIL,
+
+    // VM errors
+    ERR_STACK_OVERFLOW = 100,
+    ERR_STACK_UNDERFLOW,
+    ERR_DIVIDE_BY_ZERO,
+    ERR_ILLEGAL_INSTRUCTION,
+    ERR_UNKNOWN_OPCODE_VM,
+    ERR_REG_OUT_OF_BOUNDS,
+    ERR_PC_OUT_OF_BOUNDS,
+    ERR_ARITHMETIC_OVERFLOW,
+    ERR_CALLSTACK_OVERFLOW,
+    ERR_CALLSTACK_UNDERFLOW,
+    ERR_TIMEOUT,
+    ERR_INVALID_MEMORY_ACCESS,
+
+    // Fuzzer/meta/infrastructure
+    ERR_FUZZ_INPUT_TOO_LARGE = 200,
+    ERR_FUZZ_UNEXPECTED_EOF,
+    ERR_INTERNAL_INVARIANT,
+    ERR_UNKNOWN //catch-all error incase not defined
+} Errors;
+
+void report_VMerror(Errors err, const char* detail, int pc);
+
+
+#endif

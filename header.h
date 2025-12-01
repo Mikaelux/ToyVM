@@ -45,7 +45,7 @@ typedef struct Label{
 } Label;
 
 typedef struct VM {
-  int call_sp;
+int call_sp;
   int callstack[CALLSIZE];
   int stack[STACKSIZE];
   int sp;
@@ -58,6 +58,7 @@ typedef struct VM {
   const Instr *program;
   Label labels[MAXLABELS];
 } VM;
+
 
 //helper function
 void label_parse(VM* vm, int program_size);
@@ -72,7 +73,7 @@ void instr_pop(VM*vm, const Instr* instrc);
 void instr_set(VM*vm, const Instr* instrc);
 void instr_load(VM*vm, const Instr* instrc);
 void instr_hlt(VM*vm, const Instr* instrc);
-void instr_jmp(VM*VM, const Instr* instrc);
+void instr_jmp(VM*vm, const Instr* instrc);
 void instr_cmp(VM*vm, const Instr* instrc);
 void instr_lbl(VM*vm, const Instr* instrc);
 void instr_je(VM*vm, const Instr* instrc);
@@ -90,11 +91,18 @@ void instr_dec(VM*vm, const Instr* instrc);
 
 //ASSEMBLER ONLY DEFINITIONS
 
+
+#define OP_NONE  (0 << 0)  // 0b000
+#define OP_IMM   (1 << 0)  // 0b001
+#define OP_REG   (1 << 1)  // 0b010
+#define OP_LABEL (1 << 2)  // 0b100
+
 typedef struct Instr_template{
   Operations ID;
   int min_operand;
   int max_operand;
   InstrFunc execute;
+  int validOp[2];
 } Instr_template;
 
 extern Instr_template lookup[];
@@ -103,5 +111,7 @@ extern const char* operation_names[];
 extern int u_program_size;
 extern Instr *u_program;
 void define_program();
+void free_program(Instr*program, int program_size);
+
 #endif
 
