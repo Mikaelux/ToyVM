@@ -1,4 +1,4 @@
-#include<stdio.h>
+include<stdio.h>
 #include<stdlib.h>
 #include<stdbool.h>
 #include<string.h>
@@ -8,15 +8,9 @@
 #define MAXSTEPS 100000 //for catching infinite loops early and preventing DDOS 
 // Include the comparison function and flags structures
 
-void report_VMerror(Errors err, const char* detail, int pc){
-  fprintf(stderr, "Stage : VM | Error number %d : %s at line %d", err, detail, pc);
-  exit(ERR_SYNTAX);
-}
-
 int assess_operand(VM* vm, Operand op){
   if(!vm){
-    fprintf(stderr, "assess operand: vm is empty\n");
-    exit(1);
+    report_vm_error(ERR_IO, vm->ip, NULL, "Input VM issue");
   }
 
   OperandType type = op.type;
@@ -25,58 +19,60 @@ int assess_operand(VM* vm, Operand op){
       return op.value.imm;
   case REG:
       if(op.value.reg < 0 || op.value.reg >= NUMOFREGS){
-        fprintf(stderr, "Register not within index");
-        exit(1);
+        report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, NULL, "Register value not within register indexes");
       }
       return vm->registers[op.value.reg];
   case LABEL:
-      printf("Invalid operand : label where num value is expected");
+      report_vm_error(ERR_INVALID_TOKEN, vm->ip, NULL, "Operation expects a REG OR IMM: Label submitted");
   case NONE:
       exit(1);
   default:
-      printf("no op");
-      exit(1);
+      report_vm_error(ERR_IO, vm->ip, NULL, "Operand not registered");
   }
 }
 
 void instr_psh(VM*vm, const Instr* instrc){
   if(vm->sp>=STACKSIZE - 1){
-     report_VMerror(ERR_STACK_OVERFLOW, "Stack is full\n", vm->ip);
+     report_vm_error(ERR_STACK_OVERFLOW, vm->ip, NULL, "Stack is full, can't push\n");
   }
   vm->stack[++vm->sp] = instrc->operand1.value.imm;
 }
 
 void instr_add(VM*vm, const Instr* instrc){
+  if(vm->sp<2) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "ADD", "Not enough operands in stack to execute operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
   vm->stack[++vm->sp] = op1+op2;
 }
 
-void instr_sub(VM*vm, const Instr* instrc){ 
+void instr_sub(VM*vm, const Instr* instrc){  
+  if(vm->sp<2) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "SUB", "Not enough operands in stack to execute operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
   vm->stack[++vm->sp] = op2-op1;
 }
 
 void instr_mul(VM*vm, const Instr* instrc){ 
+  if(vm->sp<2) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "MUL", "Not enough operands in stack to execute operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
   vm->stack[++vm->sp] = op1*op2;
 }
 
 void instr_div(VM*vm, const Instr* instrc){ 
+  if(vm->sp<2) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "DIV", "Not enough operands in stack to execute operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
 
-  if(op2 == 0){
-    report_VMerror(ERR_DIVIDE_BY_ZERO, "Invalid division\n", vm->ip);
+  if(op1 == 0){
+    report_vm_error(ERR_DIVIDE_BY_ZERO, vm->ip, "DIV", "Invalid division\n", );
   }
   vm->stack[++vm->sp] = op2/op1;
 }
 
 void instr_pop(VM*vm, const Instr* instrc){
   if(vm->sp<0){
-    report_VMerror(ERR_STACK_UNDERFLOW, "Stack is empty\n", vm->ip);
+    report_VMerror(ERR_STACK_UNDERFLOW, "Stack is empty, can't pop\n", vm->ip);
 
   }
   printf("The value popped is %d\n", vm->stack[vm->sp--]);
@@ -84,23 +80,24 @@ void instr_pop(VM*vm, const Instr* instrc){
 
 void instr_set(VM*vm, const Instr* instrc){
   Regs reg = instrc->operand1.value.reg;
-
+  if(reg < 0 && reg >= NUMOFREGS) report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, "CMP", "Register index used out of bounds");
   int value = instrc->operand2.value.imm;
   vm->registers[reg] = value;
 }
 
 void instr_load(VM*vm, const Instr* instrc){ 
   if(vm->sp > STACKSIZE - 1){
-    printf("Stack overflow\n");
+    report_vm_error(ERR_STACK_OVERFLOW, vm->ip, "LOAD", "Can't load unto stack");
   }
   int value = instrc->operand1.value.reg;
+  if(value < 0 && value >= NUMOFREGS) report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, "CMP", "Register index used out of bounds");
   int reg_value = vm->registers[value];
   vm->stack[++vm->sp] = reg_value;
 }
 
 void instr_hlt(VM*vm, const Instr* instrc){
   vm->running=false;
-printf("Program has ended\n");
+  printf("Program has ended\n");
 }
 
 void label_parse(VM* vm, int program_size){
