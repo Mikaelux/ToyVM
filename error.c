@@ -37,8 +37,3 @@ void report_asm_error(Errors err, int pc,
 }
 
 
-int main(){
-  report_asm_error(ERR_DIVIDE_BY_ZERO, 2, "token", "detail");
-  return 0;
-}
-

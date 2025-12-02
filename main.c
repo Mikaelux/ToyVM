@@ -1,4 +1,4 @@
-include<stdio.h>
+#include<stdio.h>
 #include<stdlib.h>
 #include<stdbool.h>
 #include<string.h>
@@ -10,7 +10,7 @@ include<stdio.h>
 
 int assess_operand(VM* vm, Operand op){
   if(!vm){
-    report_vm_error(ERR_IO, vm->ip, NULL, "Input VM issue");
+    report_vm_error(ERR_IO, vm->ip, NULL, "input processing failed: VM-assessOperand");
   }
 
   OperandType type = op.type;
@@ -19,60 +19,60 @@ int assess_operand(VM* vm, Operand op){
       return op.value.imm;
   case REG:
       if(op.value.reg < 0 || op.value.reg >= NUMOFREGS){
-        report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, NULL, "Register value not within register indexes");
+        report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, NULL, "Register index used invalid");
       }
       return vm->registers[op.value.reg];
   case LABEL:
-      report_vm_error(ERR_INVALID_TOKEN, vm->ip, NULL, "Operation expects a REG OR IMM: Label submitted");
+      report_vm_error(ERR_INVALID_TOKEN, vm->ip, NULL, "Label operand invalid in this position");
   case NONE:
-      exit(1);
+      report_vm_error(ERR_SYNTAX, vm->ip, NULL, "Operation requires a REG/IMM operand");
   default:
-      report_vm_error(ERR_IO, vm->ip, NULL, "Operand not registered");
+       report_vm_error(ERR_SYNTAX, vm->ip, NULL, "Operation requires a REG/IMM operand");
   }
 }
 
 void instr_psh(VM*vm, const Instr* instrc){
   if(vm->sp>=STACKSIZE - 1){
-     report_vm_error(ERR_STACK_OVERFLOW, vm->ip, NULL, "Stack is full, can't push\n");
+     report_vm_error(ERR_STACK_OVERFLOW, vm->ip, "PSH", "Stack overflow, can't push further\n");
   }
   vm->stack[++vm->sp] = instrc->operand1.value.imm;
 }
 
 void instr_add(VM*vm, const Instr* instrc){
-  if(vm->sp<2) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "ADD", "Not enough operands in stack to execute operation");
+  if(vm->sp<1) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "ADD", "Stack doesn't contain enough operands for stack operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
   vm->stack[++vm->sp] = op1+op2;
 }
 
 void instr_sub(VM*vm, const Instr* instrc){  
-  if(vm->sp<2) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "SUB", "Not enough operands in stack to execute operation");
+if(vm->sp<1) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "SUB", "Stack doesn't contain enough operands for stack operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
   vm->stack[++vm->sp] = op2-op1;
 }
 
 void instr_mul(VM*vm, const Instr* instrc){ 
-  if(vm->sp<2) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "MUL", "Not enough operands in stack to execute operation");
+ if(vm->sp<1) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "MUL", "Stack doesn't contain enough operands for stack operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
   vm->stack[++vm->sp] = op1*op2;
 }
 
 void instr_div(VM*vm, const Instr* instrc){ 
-  if(vm->sp<2) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "DIV", "Not enough operands in stack to execute operation");
+ if(vm->sp<1) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "DIV", "Stack doesn't contain enough operands for stack operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
 
   if(op1 == 0){
-    report_vm_error(ERR_DIVIDE_BY_ZERO, vm->ip, "DIV", "Invalid division\n", );
+    report_vm_error(ERR_DIVIDE_BY_ZERO, vm->ip, "DIV","Division can't be done by zero\n");
   }
   vm->stack[++vm->sp] = op2/op1;
 }
 
 void instr_pop(VM*vm, const Instr* instrc){
   if(vm->sp<0){
-    report_VMerror(ERR_STACK_UNDERFLOW, "Stack is empty, can't pop\n", vm->ip);
+    report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "POP","Stack is empty, can't pop\n");
 
   }
   printf("The value popped is %d\n", vm->stack[vm->sp--]);
@@ -80,34 +80,24 @@ void instr_pop(VM*vm, const Instr* instrc){
 
 void instr_set(VM*vm, const Instr* instrc){
   Regs reg = instrc->operand1.value.reg;
-  if(reg < 0 && reg >= NUMOFREGS) report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, "CMP", "Register index used out of bounds");
+  if(reg < 0 || reg >= NUMOFREGS) report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, "SET", "Register in input is invalid");
   int value = instrc->operand2.value.imm;
   vm->registers[reg] = value;
 }
 
 void instr_load(VM*vm, const Instr* instrc){ 
   if(vm->sp > STACKSIZE - 1){
-    report_vm_error(ERR_STACK_OVERFLOW, vm->ip, "LOAD", "Can't load unto stack");
+    report_vm_error(ERR_STACK_OVERFLOW, vm->ip, "LOAD", "Can't load anny more elements");
   }
   int value = instrc->operand1.value.reg;
-  if(value < 0 && value >= NUMOFREGS) report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, "CMP", "Register index used out of bounds");
+  if(value < 0 || value >= NUMOFREGS) report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, "SET", "Register in input is invalid");
   int reg_value = vm->registers[value];
   vm->stack[++vm->sp] = reg_value;
 }
 
 void instr_hlt(VM*vm, const Instr* instrc){
   vm->running=false;
-  printf("Program has ended\n");
-}
-
-void label_parse(VM* vm, int program_size){
-for(int i=0; i<program_size; i++){
-    if (vm->program[i].ID == LBL){
-      strcpy(vm->labels[vm->lb].name, vm->program[i].operand1.value.label);
-      vm->labels[vm->lb].address = i;
-      vm->lb++;
-    }
-}
+printf("Program has ended\n");
 }
 
 void instr_lbl(VM *vm, const Instr* instrc){}
@@ -136,17 +126,17 @@ void instr_jmp(VM* vm, const Instr* instrc) {
 }
 
 void instr_je(VM*vm, const Instr* instrc){
-    if(vm->flags.zf)instr_jmp(vm, instrc);
+   if (vm->flags.zf) instr_jmp(vm, instrc);
 }
-
 void instr_jne(VM*vm, const Instr* instrc){
-    if(!vm->flags.zf)instr_jmp(vm, instrc);
+   if (!vm->flags.zf) instr_jmp(vm, instrc);
 }
 
 void instr_jg(VM*vm, const Instr* instrc){
-  if(vm->flags.sf == vm->flags.of){
+ if (vm->flags.sf==vm->flags.of){
     instr_jmp(vm, instrc);
   }
+
 }
 
 void instr_jge(VM*vm, const Instr* instrc){
@@ -168,11 +158,13 @@ void instr_jle(VM*vm, const Instr* instrc){
 }
 
 void instr_call(VM*vm, const Instr* instrc){
+  if(vm->call_sp + 1 >= CALLSIZE) report_vm_error(ERR_CALLSTACK_OVERFLOW, vm->ip, "CALL", "Call stack too full");
   vm->callstack[++vm->call_sp] = vm->ip;
   instr_jmp(vm, instrc);
 }
 
 void instr_ret(VM*vm, const Instr* instrc){
+  if(vm->call_sp < 0) report_vm_error(ERR_CALLSTACK_UNDERFLOW, vm->ip, "CALL", "Call stack empty");
   vm->ip = vm->callstack[vm->call_sp--];
 }
 
@@ -231,8 +223,14 @@ const int program_size = sizeof(program) / sizeof(program[0]);
 */
 
 int main(){
-  define_program();
-  VM vm = {
+  Instr *u_program = NULL;
+  int u_program_size = 0;
+  Label *label_array = NULL;
+  int lb_count = 0;
+
+  define_program(&u_program, &u_program_size, &label_array, &lb_count);
+
+    VM vm = {
     .call_sp = -1,
     .stepcount = 0,
     .lb = 0,
@@ -241,7 +239,9 @@ int main(){
     .running = true,
     .program = u_program,
   };
-  label_parse(&vm, u_program_size);
+
+  memcpy(vm.labels, label_array, lb_count*sizeof(Label));
+  vm.lb = lb_count;
   while (vm.running) {
         const Instr* instr = &vm.program[vm.ip++];
         instr->execute(&vm, instr);

@@ -4,12 +4,10 @@
 #include<ctype.h>
 #include<limits.h>
 #include"header.h"
-#include "error.h"
+#include"error.h"
 #define MAX_LINES 100 
 #define MAX_LINES_LENGTH 255
 
-int u_program_size = 0;
-Instr *u_program = NULL;
 
 Instr_template lookup[OPCODE]= {
   {PSH, 1, 1, instr_psh, { OP_IMM,  OP_NONE} },
@@ -155,7 +153,7 @@ bool isValidInstruction(char**words, int *index){
 
 
   for(int i=0; i<OPCODE; i++){
-    if(strcmp(validated_words[0], operation_names[i]) == 0){
+    if(strcmp(words[0], operation_names[i]) == 0){
       found_opcode = i;
       break;
     }
@@ -185,7 +183,7 @@ bool isValidInstruction(char**words, int *index){
     }
   }
 
-  *index = found_opcode
+  *index = found_opcode;
   return true;
 }
 
@@ -225,7 +223,7 @@ char** tokenizer(char*beta_token){
   
   if(!beta_token) report_asm_error(ERR_IO, 199, NULL, "File entering hasn't been passed properly");
 ;
-  const int max_token = 4
+  const int max_token = 4;
   char **words = malloc(sizeof(char*) * (max_token + 1));
   if(!words){
     report_asm_error(ERR_ALLOC_FAIL, 204, NULL, "Memory allocation for line failed");
@@ -333,7 +331,53 @@ void free_tokens(char** tokens) {
 
 
 
-void define_program() {
+void free_program(Instr* program, int program_size) {
+    if (!program) return;
+    for (int i = 0; i < program_size; ++i) {
+        if (program[i].operand1.type == LABEL && program[i].operand1.value.label) {
+            free((void*)program[i].operand1.value.label); // cast to void* to discard const-ness
+        }
+        if (program[i].operand2.type == LABEL && program[i].operand2.value.label) {
+            free((void*)program[i].operand2.value.label);
+        }
+    }
+    free(program); // finally free the whole array
+}
+
+
+Label* parse_labels(Instr* program, int program_size, int*out_lb_count, int max_labels){
+  *out_lb_count = 0;
+  if(program_size < 1 || max_labels < 1) report_asm_error(ERR_IO, 350, NULL, "Program or Max labels improperly allocated");
+  Label* temp_lb_array = malloc(sizeof(Label) * max_labels);
+  if(!temp_lb_array) report_asm_error(ERR_ALLOC_FAIL, 352, NULL, "Label array allocation failed");
+  int lb_index = 0;
+  for(int i=0; i<program_size; i++){
+    if (program[i].ID == LBL){
+      for(int j=0; j<lb_index; j++){
+        if(strcmp(temp_lb_array[j].name, program[i].operand1.value.label) == 0){
+          report_asm_error(ERR_DUPLICATE_LABEL, i, temp_lb_array[j].name, "Label has a duplicate declared in code");
+        }
+      }
+      if(lb_index == max_labels){
+        free(temp_lb_array);
+        report_asm_error(ERR_TOO_MANY_LABELS, 364, NULL, "Too many labels defined in code");
+      }
+      strncpy(temp_lb_array[lb_index].name, program[i].operand1.value.label, sizeof(temp_lb_array[lb_index].name) - 1);
+      temp_lb_array[lb_index].name[sizeof(temp_lb_array[lb_index].name) - 1] = '\0';
+      temp_lb_array[lb_index].address = i;
+      lb_index++;
+    } 
+}
+  *out_lb_count = lb_index;
+  return temp_lb_array;
+}
+
+
+
+void define_program(Instr **out_program, int *out_size, Label **out_labels, int *out_label_count) {
+    int a_program_size = 0;
+    Instr *a_program = NULL;
+
     // Phase 1: Lexical Analysis
     FILE* code = fopen("code.txt", "r");
     if(!code) {
@@ -379,9 +423,9 @@ void define_program() {
     }
     
     // Phase 3: Code Generation (Encoding)
-    u_program_size = linecount;
-    u_program = malloc(sizeof(Instr) * u_program_size);
-    if(!u_program) {
+    a_program_size = linecount;
+    a_program = malloc(sizeof(Instr) * a_program_size);
+    if(!a_program) {
         // Cleanup
         for(int i = 0; i < linecount; i++) {
             free(lines[i]);
@@ -393,9 +437,17 @@ void define_program() {
     }
     
     for(int i = 0; i < linecount; i++) {
-        u_program[i] = Encoder(tokens[i]);
+        a_program[i] = Encoder(tokens[i]);
     }
     
+    int label_count = 0;
+    Label *lb_array = parse_labels(a_program, a_program_size, &label_count, MAXLABELS);
+    if(!lb_array) report_asm_error(ERR_ALLOC_FAIL, 446, "LABELS", "Label array allocation and/or creation failed");
+    
+    *out_program = a_program;
+    *out_size = a_program_size;
+    *out_label_count = label_count;
+    *out_labels = lb_array;
     // Phase 4: Cleanup intermediate structures
     for(int i = 0; i < linecount; i++) {
         free(lines[i]);
@@ -407,15 +459,4 @@ void define_program() {
 
 
 
-void free_program(Instr* program, int program_size) {
-    if (!program) return;
-    for (int i = 0; i < program_size; ++i) {
-        if (program[i].operand1.type == LABEL && program[i].operand1.value.label) {
-            free((void*)program[i].operand1.value.label); // cast to void* to discard const-ness
-        }
-        if (program[i].operand2.type == LABEL && program[i].operand2.value.label) {
-            free((void*)program[i].operand2.value.label);
-        }
-    }
-    free(program); // finally free the whole array
-}
+

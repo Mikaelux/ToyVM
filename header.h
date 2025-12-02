@@ -3,6 +3,8 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<stdbool.h>
+#include<stddef.h>
+
 
 #define CALLSIZE 124
 #define MAXLABELS 124
@@ -45,6 +47,7 @@ typedef struct Label{
 } Label;
 
 typedef struct VM {
+
 int call_sp;
   int callstack[CALLSIZE];
   int stack[STACKSIZE];
@@ -108,10 +111,12 @@ typedef struct Instr_template{
 extern Instr_template lookup[];
 extern const char* operation_names[];
 
-extern int u_program_size;
-extern Instr *u_program;
-void define_program();
-void free_program(Instr*program, int program_size);
+
+void define_program(Instr **out_program, int *out_size, Label **out_labels, int *out_label_count);
+void free_program(Instr* program, int program_size);
+
+//label stuff, just for reference
+Label* parse_labels(Instr* program, int program_size, int*out_lb_count, int max_labels);
 
 #endif
 
