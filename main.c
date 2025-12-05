@@ -121,8 +121,7 @@ void instr_jmp(VM* vm, const Instr* instrc) {
       return;
     }
   }
-  printf("Label not found: %s\n", instrc->operand1.value.label);
-  exit(1);
+  report_vm_error(ERR_UNRESOLVED_LABEL, vm->ip, "JMP", "label to jump not found");
 }
 
 void instr_je(VM*vm, const Instr* instrc){
@@ -243,6 +242,9 @@ int main(){
   memcpy(vm.labels, label_array, lb_count*sizeof(Label));
   vm.lb = lb_count;
   while (vm.running) {
+        if(vm->ip < 0 || vm->ip > u_program_size){
+          report_vm_error(ERR_PC_OUT_OF_BOUNDS, vm->ip, "index", "instruction pointer outside program size");
+        }
         const Instr* instr = &vm.program[vm.ip++];
         instr->execute(&vm, instr);
         vm.stepcount++;

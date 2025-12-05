@@ -9,6 +9,7 @@
 #define CALLSIZE 124
 #define MAXLABELS 124
 #define STACKSIZE 256
+#define MEMSIZE 1024
 typedef enum {IMM, REG, LABEL, NONE} OperandType;
 typedef enum {PSH, ADD, SUB, MUL, DIV, POP, SET, LOAD, HLT, LBL, JMP, JE, JNE, JG, JGE, JL, JLE, CMP, CALL, RET, INC, DEC, OPCODE} Operations;
 typedef struct VM VM;
@@ -47,8 +48,7 @@ typedef struct Label{
 } Label;
 
 typedef struct VM {
-
-int call_sp;
+  int call_sp;
   int callstack[CALLSIZE];
   int stack[STACKSIZE];
   int sp;

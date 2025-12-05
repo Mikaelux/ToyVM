@@ -9,6 +9,7 @@ typedef enum {
     ERR_TOO_FEW_OPERANDS,       // Not enough operands for an instruction
     ERR_TOO_MANY_OPERANDS,      // Too many operands for an instruction
     ERR_LINE_TOO_LONG,          // Source code line exceeds MAX_LINES_LENGTH
+    ERR_TOKEN_TOO_LONG,
     ERR_INVALID_REGISTER,       // Register name not recognized or out of bounds
     ERR_INVALID_LITERAL,        // Immediate is not a valid integer
     ERR_OPERAND_OUT_OF_RANGE,   // Immediate out of integer range
@@ -18,6 +19,7 @@ typedef enum {
     ERR_DUPLICATE_LABEL,        // Label was defined twice
     ERR_UNRESOLVED_LABEL,       // Used label does not exist
     ERR_TOO_MANY_LABELS,        // Exceeded MAXLABELS
+    ERR_LABEL_TOO_LONG,
     
 
     ERR_CALLSTACK_OVERFLOW,
@@ -33,6 +35,7 @@ typedef enum {
     ERR_STACK_UNDERFLOW,        // Stack underflow (pop or less-than-needed operands)
     ERR_DIVIDE_BY_ZERO,         // Division by zero
     ERR_REGISTER_OUT_OF_BOUNDS, // Register index is out of bounds
+    ERR_MISSING_HALT,
 
     // Fuzzing/Testing
     ERR_TIMEOUT,                // VM ran for too long (timeout)

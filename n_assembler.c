@@ -54,7 +54,7 @@ void trim(char *str){
 
 int reg_from_char(char*st){
   if(!st || strlen(st)!= 1) return -1;
-  char s = toupper(st[0]);
+  char s = toupper((unsigned char)st[0]);
   if(s < 'A' || s > (char)('A' + NUMOFREGS - 1)) return -1;
   return s -'A';
 }
@@ -85,7 +85,7 @@ int parse_operand(char*token){
       return OP_IMM;
   }
 
-  if(isalpha(token[0])){
+  if(isalpha((unsigned char)token[0])){
     if(strlen(token) == 1 && strchr("ABCDE", token[0])){
     int reg = reg_from_char(token);
       if(reg >= 0){
@@ -104,7 +104,11 @@ int parse_operand(char*token){
 
 char* lex_clean_line(const char* line) {
   if(!line) report_asm_error(ERR_ALLOC_FAIL, 110, line, "Issue with memory allocation");
-    
+  for (size_t i = 0; i < line_len; i++) {
+    if (line[i] == '\0' && i < line_len - 1) {
+      report_asm_error(ERR_INVALID_TOKEN, 0, NULL, "Null byte in input");
+    }
+  }
   const char* comment_pos = strchr(line, ';');
   int useful_len = comment_pos ? (comment_pos - line) : strlen(line);
     
@@ -217,7 +221,7 @@ char** split_lines(FILE* file, int *out){
   return lines;
 }
 
-
+#define MAX_TOKEN_LENGTH 64
 
 char** tokenizer(char*beta_token){
   
@@ -236,6 +240,7 @@ char** tokenizer(char*beta_token){
   char*token = strtok(beta_token, " ");
 
   while(token != NULL && count<3){
+    if(strlen(token) >= MAX_TOKEN_LENGTH) report_asm_error(ERR_TOKEN_TOO_LONG, 243, NULL, "Token exceeds maximum length");
     words[count] = strdup(token);
     if(!words[count]){
       for(int i = 0; i < count; i++) free(words[i]);
@@ -362,12 +367,29 @@ Label* parse_labels(Instr* program, int program_size, int*out_lb_count, int max_
         free(temp_lb_array);
         report_asm_error(ERR_TOO_MANY_LABELS, 364, NULL, "Too many labels defined in code");
       }
-      strncpy(temp_lb_array[lb_index].name, program[i].operand1.value.label, sizeof(temp_lb_array[lb_index].name) - 1);
+      const char* label_name = program[i].operand1.value.label;
+      size_t label_len = strlen(label_name);
+
+      if(label_name >= sizeof(temp_lb_array[lb_index].name)){
+        report_asm_error(ERR_LABEL_TOO_LONG, 373, label_name, "Label is too long");
+      }
+      strncpy(temp_lb_array[lb_index].name, label_name, sizeof(temp_lb_array[lb_index].name) - 1);
       temp_lb_array[lb_index].name[sizeof(temp_lb_array[lb_index].name) - 1] = '\0';
       temp_lb_array[lb_index].address = i;
       lb_index++;
     } 
-}
+  }
+  
+  bool has_halt = false;
+  for(int i=0; i<program_size; i++){
+    if(program[i].ID == HLT){
+      has_halt = true;
+      break;
+    }
+  }
+  if(!has_halt){
+    report_asm_error(ERR_MISSING_HALT, vm->ip, "halt", "Program missing a halt.")
+  }
   *out_lb_count = lb_index;
   return temp_lb_array;
 }
@@ -394,7 +416,7 @@ void define_program(Instr **out_program, int *out_size, Label **out_labels, int 
     
     if(linecount == 0) {
       free(lines);
-      report_asm_error(ERR_IO, 343, NULL, "Couldn't read the file");
+      report_asm_error(ERR_IO, 343, NULL, "File is empty");
        
     }
     
