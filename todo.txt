@@ -1,3 +1,3 @@
-- Migrate label parsing to assembler.
-- Add errors to the main function for fuzz proofing
-- Begin work on fuzzer core
+- Implement mutation functions
+- write an error log and inter-file comm for results
+- think about RL python model and connections
