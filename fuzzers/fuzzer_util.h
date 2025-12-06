@@ -38,10 +38,10 @@ char* file_read(const char* path, size_t *out_len);
 bool dir_create(const char* path);
 bool file_exists(const char* path);
 
-char** str_find_line(Buffer* buf, int line_num);
+bool str_find_line(Buffer* buf, int line_num, size_t *out_line_start, size_t *out_line_length);
 int str_count_lines(Buffer* buf);
 char* str_find_substr(Buffer* buf, char*needle);
-
+bool get_opcode_on_line(Buffer* buf, size_t line_start, size_t* out_start, size_t* out_length);
 //time 
 uint64_t time_now_ms();
 double time_elapsed(uint64_t start_ms);
@@ -49,6 +49,11 @@ double time_elapsed(uint64_t start_ms);
 
 //MUTATION
 //byte-level
+bool mut_flip_bit(Buffer* buf);
+bool mut_flip_byte(Buffer* buf);
+bool mut_insert_byte(Buffer* buf);
+bool mut_delete_byte(Buffer* buf);
+bool mut_duplicate_chunk(Buffer* buf);
 
 bool mut_swap_opcode(Buffer* buf);
 bool mut_corrupt_opcode(Buffer* buf);
@@ -82,7 +87,7 @@ bool mut_empty_lines(Buffer* buf);
 bool mut_inject_comment(Buffer* buf);
 
 
-
+extern const char* opcodes[];
 
 
 
