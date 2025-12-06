@@ -46,7 +46,11 @@ bool get_opcode_on_line(Buffer* buf, size_t line_start, size_t* out_start, size_
 uint64_t time_now_ms();
 double time_elapsed(uint64_t start_ms);
 
-
+typedef struct NumberCor{
+  size_t start;
+  size_t len;
+} NumberCor;
+int *find_next_num(Buffer* buf, size_t from, size_t *num_start, size_t num_len);
 //MUTATION
 //byte-level
 bool mut_flip_bit(Buffer* buf);
@@ -88,8 +92,7 @@ bool mut_inject_comment(Buffer* buf);
 
 
 extern const char* opcodes[];
-
-
+extern const int boundary_vals[];
 
 
 

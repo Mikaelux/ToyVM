@@ -4,6 +4,7 @@
 #include<stdint.h>
 #include<unistd.h>
 #include<sys/random.h>
+#include<errno.h>
 #include<sys/stat.h>
 #include<sys/types.h>
 #include<stdint.h>
@@ -409,8 +410,87 @@ bool mut_corrupt_opcode(Buffer* buf){
   }
 return false;
 }
-bool mut_boundary_value(Buffer* buf);
-bool mut_invalid_register(Buffer* buf);
+
+
+int *find_next_num(Buffer* buf, size_t from, NumberCor* numz){
+  size_t i = from;
+
+  while(i < buf->length){
+    bool is_start = false;
+    bool is_negative = false;
+
+    char c = buf-> data[i];
+
+    if(c > '0' && c < '9'){
+      if (i == 0 || buf->data[i-1] == ' ' 
+        || buf->data[i-1] == '\t' 
+        || buf->data[i-1] == '\n'){
+          is_start = true;
+      }
+    }
+    else if (c == '-' && i + 1 < buf->length) {
+      char next = buf->data[i + 1];
+      if (next >= '0' && next <= '9') {
+        if (i == 0 || 
+          buf->data[i-1] == ' ' || 
+          buf->data[i-1] == '\t' || 
+          buf->data[i-1] == '\n') {
+          is_start = true;
+          is_negative = true;
+          }
+      }
+    }
+
+    if(is_start){
+      numz->start = i;
+
+      if(is_negative) i++;
+
+      while(i < buf->length && buf->data[i] >= '0' && buf->data[i] <= '9'){
+        i++;
+      }
+      numz->len = i - numz->start;
+      return true;
+    }
+    i++;
+  }
+  return false;
+}
+
+
+const int boundary_vals[] = {
+  "0", "1", "-1",
+  "127", "-128", "128", "-129",
+  "255", "256",
+  "32767", "-32768", "32768", "-32769", "65535", "655356",
+  "2147483647", "-2147483648","2147483648", "-2147483649",
+  "2147483647", "2147483648", "-2147483648", "-2147483649"
+  "99999999999999", "0x10", "1.5"
+}
+
+int boundary_size = sizeof(boundary_vals) / sizeof(boundary_vals[0]);
+
+bool mut_boundary_value(Buffer* buf){
+  NumberCor numbers[128];
+  int count = 0;
+  size_t pos = 0;
+
+  while(count < 128 && find_next_num(buf, pos, &numbers[count])){
+    pos = numbers[count].start + numbers[count].len;
+    count++;
+  }
+
+  if(count == 0) return false;
+
+  int choice = rand_index(count);
+  NumberCor* target = &numbers[choice];
+  const char* boundary_choice = boundary_vals[rand_index(boundary_size)];
+  return buf_replace(buf, target->start, target->len, boundary_choice, strlen(boundary_choice));
+
+}
+bool mut_invalid_register(Buffer* buf){
+
+}
 bool mut_swap_operands(Buffer* buf);
 
 //instruction-level
