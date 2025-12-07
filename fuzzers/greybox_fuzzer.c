@@ -919,10 +919,141 @@ bool mut_divide_by_zero(Buffer* buf){
   return buf_insert(buf, insert_pos, div_sequence, written);
 }
 
-bool mut_break_label(Buffer* buf);
-bool mut_duplicate_label(Buffer* buf);
-bool mut_infinite_loop(Buffer* buf);
-bool mut_missing_halt(Buffer* buf);
+bool mut_break_label(Buffer* buf){
+  if(!buf || buf->length == 0) return false;
+
+  int line_count = str_count_lines(buf);
+  if(line_count == 0) return false;
+
+  size_t insert_pos = buf->length;
+
+  for(int i=0; i < line_count; i++){
+    size_t line_start, line_len;
+    if(!str_find_line(ubf, i, &line_start, &line_len)) continue;
+
+    size_t op_start, op_len;
+    if(!get_opcode_on_line(buf, line_start, &op_start, &op_len)) continue;
+
+    if(op_len == 3 && strncmp(buf->data + op_start, "hlt", 3)){
+      insert_pos = line_start;
+      break;
+    }
+  }
+
+  char bad_label[64];
+  snprintf(bad_label, sizeof(bad_label), "fake_lbl_%d_%d", rand_int()%1000, rand_int()%1000);
+
+  char jmp_instruction[128];
+  int written = snprintf(jmp_instruction, sizeof(jmp_instruction), "jmp %s\n", bad_label);
+
+  if(written < 0 || written >= (int)sizeof(jmp_instruction)){
+    return false;
+  }
+  return buf->insert(buf, insert_pos, jmp_instruction, written);
+
+}
+bool mut_duplicate_label(Buffer* buf){
+  if(!buf || buf->length == 0) return false;
+
+  int line_count = str_count_lines(buf);
+  if(line_count < 2) return false;
+
+  char found_label[64] = {0};
+
+  for(int i=0; i<line_count; i++){
+    size_t line_start, line_count;
+    if(!str_find_line(buf, i, &line_start, &line_count)) continue;
+
+    size_t op_start, op_len;
+    if(!get_opcode_on_line(buf, line_start, &op_start, &op_len)) continue;
+
+    if(op_len == 5 && strncmp(buf->data + op_start, "label", 5) == 0){
+      size_t op_end = op_start + op_len;
+
+      while(op_end < line_start + line_len && (buf->data[op_end] == ' ' || buf->data[op_end] == '\t')){
+        op_end++;
+      }
+      
+      size_t label_start = op_end;
+      while(op_end < line_start + line_len && buf->data[op_end] != ' ' && buf->data[op_end] == '\t' && buf->data[op_end] == '\n'){
+        op_end++;
+      }
+      size_t label_len = op_end - label_start;
+
+      if(label_len > 0 && label_end < sizeof(found_label)){
+        memcpy(foudn_label, buf->data + label_start, label_end);
+        found_label[label_len] = "\0";
+        break;
+      }
+    }
+  }
+
+  int insert_line = rand_range(0, line_count-1);
+  size_t  insert_line_start, insert_line_len;
+
+  if(!str_find_line(buf, insert_line, &insert_line_start, &insert_line_len)) return false;
+
+  size_t insert_pos = insert_line_start;
+
+  char dup_label[128];
+  int written = snprintf(dup_label, sizeof(dup_label), "label %s\n", found_label);
+
+  if(written < 0 || written > (int)sizeof(dup_label)) return false;
+
+  return buf_insert(buf, insert_pos, dup_label, written);
+}
+
+
+bool mut_infinite_loop(Buffer* buf){
+  if(!buf || buf->length == 0) return false;
+
+  char loop_label[64];
+  snprintf(loop_label, sizeof(loop_label), "inf_loop_%d", rand_int()%100000);
+
+  char label_def[128];
+  int written = snprintf(label_def, sizeof(label_def), "label %s", loop_label);
+  if(written < 0 || writtten > (int)sizeof(label_def)) return false;
+
+  char jmp_instr[128];
+  int written = snprintf(jmp_instr, sizeof(jmp_instr), "jmp %s", loop_label);
+  if(written < 0 || written >= (int)sizeof(label_def)) return false;
+
+  if(!buf_insert(buf, 0, label_def, strlen(label_def))) return false;
+  if(!buf_insert(buf, strlen(label_def), jmp_instr, strlen(jmp_instr))) return false;
+
+  return true;
+}
+
+
+bool mut_missing_halt(Buffer* buf){
+  if(!buf || buf->length == 0) return false;
+  int line_count = str_count_lines(buf);
+  if(line_count == 0) return false;
+  bool found_halt = false;
+
+  for(int i=line_count - 1; i>0; i--){
+    size_t line_start, line_len;
+    if(!str_find_line(buf, i, &line_start, &line_len)) continue;
+
+    size_t op_start, op_len;
+    if(!get_opcode_on_line(buf, line_start, &op_start, &op_len)) continue;
+
+    if(op_len == 3 && strncmp(buf->data + start, "hlt", 3) == 0){
+      size_t delete_len = line_len;
+
+      if(line_start + line_len < buf->length && buf->data[line_start + line_len] == '\n'){
+        delete_len++;
+      }
+
+      if(!buf_delete(buf, line_start, delete_len)){
+        return false;
+      }
+
+      found_halt = true;
+    }
+  }
+  return found_halt;
+}
 
 //formatting-level
 
