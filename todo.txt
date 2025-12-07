@@ -1,3 +1,3 @@
-- Implement mutation functions
+- Implement runtime and structure mutation functions
 - write an error log and inter-file comm for results
 - think about RL python model and connections
