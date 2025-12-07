@@ -244,7 +244,11 @@ int main(){
     .running = true,
     .program = u_program,
   };
+  
   memset(vm.registers, 0, sizeof(vm.registers));
+  for(int i=0; i<NUMOFREGS; i++){
+    vm.registers[i] = 0;
+  }
   memset(vm.stack, 0, sizeof(vm.stack));
   memset(vm.callstack, 0, sizeof(vm.callstack));
   if (lb_count > MAXLABELS) {

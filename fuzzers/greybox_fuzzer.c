@@ -22,6 +22,11 @@ void init_rg(){
   inc |= 1;
 }
 
+void init_rg_state(uint64_t seed){
+  state = seed;
+  inc = seed | 1;
+}
+
 uint32_t pgc32() {
   uint64_t oldstate = state;
   state = oldstate * 6364136223846793005ULL + inc;
@@ -37,7 +42,11 @@ int rand_int(){
 }
 
 int rand_range(int min, int max){
-  return min + (rand_int() % (max - min + 1));
+  if(min > max){
+    int t=min; min=max; max = t;
+  }
+  uint32_t r = pgc32();
+  return min + (r % (int)(max - min + 1));
 }
 
 size_t rand_index(size_t size){
@@ -45,16 +54,18 @@ size_t rand_index(size_t size){
   return pgc32() % size;
 }
 
-double rand_dbl(){
-  return (double)(pgc32());
-}
-
 bool rand_bool(){
   return pgc32() & 1;
 }
 
 int rand_chance(int percent){
+  if(percent >=100) return true;
+  if(percent <= 0) return false;
   return rand_range(0, 99) <= percent;
+}
+
+double rand_dbl(){
+  return (double)pgc32()/(double)UINT32_MAX;  
 }
 char rand_ascii(){
   return (char)rand_range(32, 126);
@@ -89,26 +100,34 @@ void buf_free(Buffer *buf){
 
 
 bool buf_grow(Buffer *buf, size_t min_capacity){
+  if(!buf) return false;
   if(buf->capacity >= min_capacity) return true;
+  
+  size_t new_capacity = buf->capacity;
+  while(new_capacity < min_capacity){
+    new_capacity *= 2;
+  }
 
-  char *new_data = realloc(buf->data, min_capacity);
+  char *new_data = realloc(buf->data, new_capacity);
   if(!new_data) return false;
   buf->data = new_data;
-  buf->capacity = min_capacity;
+  buf->capacity = new_capacity;
   return true;
 
 }
+
 bool buf_insert(Buffer* buf, size_t pos, char* data, size_t len){
   if (!buf) return false;
   if(pos > buf->length) return false;
 
-  if(!buf_grow(buf, buf->length + len + 1)) return 0;
+  if(!buf_grow(buf, buf->length + len + 1)) return false;
   memmove( buf->data + pos + len,
           buf->data + pos,
           buf->length - pos + 1);
   
   memcpy(buf->data + pos, data, len);
   buf->length += len;
+  buf->data[buf->length] = '\0';
   return true;
 }
 
@@ -165,9 +184,10 @@ bool file_write(const char* path, char* data, size_t len){
   fclose(f);
   return written == len;
 }
+
 char* file_read(const char* path, size_t *out_len){
-  FILE *f = fopen(path, "r");
-  if(!f) return false;
+  FILE *f = fopen(path, "rb");
+  if(!f) return NULL;
   if(fseek(f, 0, SEEK_END) != 0){
     fclose(f);
     return NULL;
@@ -198,13 +218,18 @@ char* file_read(const char* path, size_t *out_len){
     return buf;
 
 }
+
+
 bool dir_create(const char* path){
   mode_t mode = S_IRWXU | S_IRWXG;
   if(mkdir(path, mode) == -1){
+    if(errno = EEXIST) return true;
     return false;
   }
   return true;
 }
+
+
 bool file_exists(const char* path){
 if (access(path, F_OK) == 0) {
     return true;
@@ -214,6 +239,8 @@ if (access(path, F_OK) == 0) {
 }
 
 bool str_find_line(Buffer *buf, int line_num, size_t *out_line_start, size_t *out_line_length){
+  if(!buf || buf->length == 0) return false;
+  
   size_t index = 0;
   int current_line = 0;
 
@@ -237,7 +264,7 @@ bool str_find_line(Buffer *buf, int line_num, size_t *out_line_start, size_t *ou
 }
 
 int str_count_lines(Buffer* buf){
-  int index = 0;
+  size_t index = 0;
   int line_count = 0;
   while(index < buf->length){
     if(buf->data[index] == '\n') line_count++;
@@ -250,16 +277,12 @@ int str_count_lines(Buffer* buf){
 
 char* str_find_substr(Buffer* buf, char*needle){
   if(!buf || !needle) return NULL;
-  int needle_len = strlen(needle);
-  int buf_len = buf->length;
+  size_t needle_len = strlen(needle);
+  size_t buf_len = buf->length;
   if(buf_len < needle_len) return NULL;
-  for(size_t i = 0 ; i < buf_len - needle_len; i++){
+  for(size_t i = 0 ; i <= buf_len - needle_len; i++){
     if(memcmp(buf->data + i, needle, needle_len) == 0){
-      char * result = malloc(needle_len + 1);
-      if(!result) return NULL;
-      memcpy(result, buf->data+i, needle_len);
-      result[needle_len] = '\0';
-      return result;
+      return buf->data + i;
     }
   }
   return NULL;
@@ -285,16 +308,17 @@ double time_elapsed(uint64_t start_ms){
 //
 
 bool mut_flip_bit(Buffer* buf){
-  if(buf->length == 0) return false;
+  if(!buf || buf->length == 0) return false;
   size_t index = rand_index(buf->length);
   int bit_to_flip = rand_range(0, 7);
 
-  buf->data[index] ^= (1U << bit_to_flip);
+  uint8_t mask = (1U << bit_to_flip);
+  buf->data ^= (char)mask;
   return true;
 }
 
 bool mut_flip_byte(Buffer* buf){
-  if(buf->length == 0) return false;
+  if(!buf || buf->length == 0) return false;
   size_t index = rand_index(buf->length);
   buf->data[index] = rand_byte();
   return true;
@@ -302,16 +326,16 @@ bool mut_flip_byte(Buffer* buf){
 }
 
 bool mut_insert_byte(Buffer* buf){
-  if(buf->length > buf->capacity) return false;
+  if(!buf || buf->length ==0) return false;
   size_t index = rand_range(0, buf->length);
   uint8_t byte = rand_byte();
 
-  buf_insert(buf, index, (char*)&byte, 1);
-  return true;
+  bool result = buf_insert(buf, index, (char*)&byte, 1);
+  return result;
 }
 
 bool mut_delete_byte(Buffer* buf){
-  if(buf->length > buf->capacity) return false;
+  if(!buf || buf->length == 0) return false;
   size_t index = rand_index(buf->length);
   buf_delete(buf, index, 1);
 return true;
@@ -321,6 +345,7 @@ bool mut_duplicate_chunk(Buffer* buf){
   if(buf->length < 2 )return false;
   size_t chunk_start = rand_index(buf->length);
   size_t max_length = buf->length - chunk_start;
+  if(max_length == 0) return false;
   size_t chunk_length = rand_range(1, max_length > 32 ? 32 : max_length);
 
   size_t insert_pos = rand_range(0, buf->length);
@@ -338,13 +363,15 @@ char* opcodes[] = {
     "psh", "add", "sub", "mul", "div", "pop", 
     "set", "load", "hlt", "label", "jmp", 
     "je", "jne", "jg", "jge", "jl", "jle",
-    "cmp", "call", "return", "inc", "dec"
+    "cmp", "call", "return", "inc", "dec",
+  NULL
 };
-int num_opcodes = sizeof(opcodes) / sizeof(opcodes[0]);
+int num_opcodes = sizeof(opcodes) / sizeof(opcodes[0]) - 1;
 
 
 
 bool get_opcode_on_line(Buffer* buf, size_t line_start, size_t* out_start, size_t* out_length){
+  if(!buf || buf->length == 0) return false;
   size_t pos = line_start;
   while (pos < buf->length && (buf->data[pos] == ' ' || buf->data[pos] == '\t')){
     pos++;
@@ -366,6 +393,7 @@ bool get_opcode_on_line(Buffer* buf, size_t line_start, size_t* out_start, size_
 }
 
 bool mut_swap_opcode(Buffer* buf){
+  if(!buf || buf->length == 0) return false;
   int num_lines = str_count_lines(buf);
   if(num_lines == 0) return false;
   int line = rand_range(0, num_lines-1);
@@ -373,18 +401,18 @@ bool mut_swap_opcode(Buffer* buf){
   size_t l_start; size_t l_length;
   if(!str_find_line(buf, line, &l_start, &l_length)) return false;
 
-  if(l_start < 0 || l_length < 0) return false;
   size_t op_start, op_len;
   if(!get_opcode_on_line(buf, l_start, &op_start, &op_len)){
     return false;
   }
   char* new_opcode = opcodes[rand_index(num_opcodes)];
 
-  return buf_replace(buf, op_start, op_len, new_opcode, strlen(new_opcode));
-
-  
+  return buf_replace(buf, op_start, op_len, new_opcode, strlen(new_opcode)); 
 }
+
+
 bool mut_corrupt_opcode(Buffer* buf){
+  if(!buf || buf->length == 0) return false;
   int num_lines = str_count_lines(buf);
   if(num_lines == 0){
     return false;
@@ -401,14 +429,21 @@ bool mut_corrupt_opcode(Buffer* buf){
   switch (corruption){
     case 0:
       if(op_len > 1){
-        size_t cut = rand_range(1, op_len - 1);
-        return buf_delete(buf, op_start + op_len - cut, cut);
+        size_t cut_len = rand_range(1, op_len - 1);
+        siez_t cut_pos = rand_range(0, op_len - cut_len);
+        return buf_delete(buf, op_start + cut_pos, cut_len);
       }
-      break;
     case 1:
       {
         size_t char_pos = op_start + rand_index(op_len);
-        buf->data[char_pos] ^= 32;
+        char c = buf->data[char_pos];
+        if (c >= 'a' && c <= 'z'){
+          buf->data[char_pos] = c - 32;
+        } else if (c >= 'A' && c <= 'Z'){
+          buf->data[char_pos] = c + 32;
+        } else {
+          buf->data[char_pos] = rand_ascii();
+        }
         return true;
       }
     case 2:
@@ -420,7 +455,15 @@ bool mut_corrupt_opcode(Buffer* buf){
     case 3:
       {
         size_t char_pos = op_start + rand_index(op_len);
-        buf->data[char_pos] += rand_range(-2, 2);
+        char c = buf->data[char_pos];
+        int offset = rand_range(-2, 2);
+        int new_val = c + offset;
+
+        /*if(new_val < 32) new_val = 32;
+        if(new_val > 126) new_val = 126;
+
+        buf->data[char_pos] = (char)new_val;*/ 
+        buf->data[char_pos] = (char)((unsigned char)buf->data[char_pos]+offset);
         return true;
       }
   }
@@ -429,14 +472,19 @@ return false;
 
 
 bool find_next_num(Buffer* buf, size_t from, NumberCor* numz){
+  if(!buf || buf->length == 0) return false;
   size_t i = from;
 
   while(i < buf->length){
-    if(buf->data[i] == '\n' || buf->data[i] == ';') return false;
+    char c = buf-> data[i];
+    if(c == '\n' || c == ';'){
+      i++;
+      continue;
+    }
+
     bool is_start = false;
     bool is_negative = false;
 
-    char c = buf-> data[i];
 
     if(c >= '0' && c <= '9'){
       if (i == 0 || buf->data[i-1] == ' ' 
@@ -479,13 +527,12 @@ char* boundary_vals[] = {
   "0", "1", "-1",
   "127", "-128", "128", "-129",
   "255", "256",
-  "32767", "-32768", "32768", "-32769", "65535", "655356",
+  "32767", "-32768", "32768", "-32769", "65535", "65536",
   "2147483647", "-2147483648","2147483648", "-2147483649",
-  "2147483647", "2147483648", "-2147483648", "-2147483649"
-  "99999999999999", "0x10", "1.5"
+  "99999999999999", "0x10", "1.5", NULL
 };
 
-int boundary_size = sizeof(boundary_vals) / sizeof(boundary_vals[0]);
+int boundary_size = sizeof(boundary_vals) / sizeof(boundary_vals[0]) - 1;
 
 bool mut_boundary_value(Buffer* buf){
   NumberCor numbers[128];
@@ -507,6 +554,7 @@ bool mut_boundary_value(Buffer* buf){
 }
 
 bool find_next_reg(Buffer *buf, size_t from, size_t *reg_start){
+  if(!buf || buf->length == 0) return false;
   size_t i = from;
 
   while(i < buf->length){
@@ -544,11 +592,20 @@ bool mut_invalid_register(Buffer* buf){
 
   int choice = rand_index(count);
   size_t target = reg_positions[choice];
-  char reg_choice = regnames[rand_index(reg_size)];
-return buf_replace(buf, target, 1, &reg_choice, 1);
+  char invalid_regs[] = {'F', 'G', 'X', 'Z', '1', '@', ' '};
+  size_t inval_reg_size = sizeof(invalid_regs)/sizeof(invalid_regs[0]);
+  char regchoice;
+  if(rand_chance(70)){
+    regchoice = reg_names[rand_index(reg_size)];
+  } else {
+    regchoice = invalid_regs[rand_index(inval_reg_size)];
+  }
+
+  return buf_replace(buf, target, 1, &reg_choice, 1);
 }
 
 bool mut_swap_operands(Buffer* buf){
+  if(!buf) return false;
   int line_count = str_count_lines(buf);
   if(line_count == 0) return false;
 
@@ -563,15 +620,17 @@ bool mut_swap_operands(Buffer* buf){
   size_t line_end = c_line_start + c_line_len;
   size_t pos = op_start+op_len;
 
-  while(pos < line_end && (buf->data[pos] == ' ' || buf->data[pos] == '\t')) pos++;
+  while(pos < line_end && (buf->data[pos] == ' '|| buf->data[pos] == '\t')) pos++;
+
   size_t op1_start = pos;
-  while(pos < line_end && buf->data[pos] != ' ' && buf->data[pos] != '\t') pos++;
+  while(pos < line_end && buf->data[pos] != ' ' && buf->data[pos] != '\t'&& buf->data[pos] == '\n') pos++;
   size_t op1_len = pos - op1_start;
 
 
   while(pos < line_end && (buf->data[pos] == ' ' || buf->data[pos] == '\t')) pos++;
+
   size_t op2_start = pos;
-  while(pos < line_end && buf->data[pos] != ' ' && buf->data[pos] != '\t') pos++;
+  while(pos < line_end && buf->data[pos] != ' ' && buf->data[pos] != '\t'&& buf->data[pos] == '\n') pos++;
   size_t op2_len = pos - op2_start;
 
   if(op1_len == 0 || op2_len == 0) return false;
@@ -600,6 +659,8 @@ int generate_imm_value(){
     const char* c = boundary_vals[rand_index(boundary_size)];
     char* endptr;
     long val = strtol(c, &endptr, 0);
+    if(val > INT_MAX) return INT_MAX;
+    if(val < INT_MIN) return INT_MIN;
     return (int)val;
   } 
 
@@ -611,7 +672,7 @@ char*generate_valid_instruction(){
   Instr_template* tmpi = &lookup[op_index];
   const char* opcode_name = operation_names[op_index];
 
-  char result[256];
+  char result[512];
   int pos = 0;
 
   pos += sprintf(result + pos, "%s", opcode_name);
@@ -620,6 +681,7 @@ char*generate_valid_instruction(){
     //preconditions
     int valid = tmpi->validOp[i];
     if(valid == OP_NONE) break;
+    if(pos >= 480) break;
     result[pos++] = ' ';
     //decide optype 
     int type;
@@ -650,12 +712,13 @@ char*generate_valid_instruction(){
 
   }
   result[pos++] = '\n';
+  result[pos] = '\0';
   return strdup(result);
 
 }
 
 char* generate_chaos_instruction(){
-  char result[256];
+  char result[512];
   int pos = 0;
   
   if(rand_chance(80)){
@@ -670,7 +733,7 @@ char* generate_chaos_instruction(){
   
   int num_operands = rand_range(0, 4);
   for(size_t i = 0; i<num_operands; i++){
-
+    if(pos >= 480) break;
     result[pos++] = ' ';
      int type = rand_range(0, 5);
         
@@ -700,6 +763,7 @@ char* generate_chaos_instruction(){
         }
   }
   result[pos++] = '\n';
+  result[pos] = '\0';
   return strdup(result);
 }
 
@@ -712,6 +776,8 @@ char* generate_instr(){
 }
 
 bool mut_insert_instruction(Buffer* buf){
+  if(!buf) return false;
+
   char *instr = generate_instr();
   if(!instr) return false;
 
@@ -738,6 +804,8 @@ bool mut_insert_instruction(Buffer* buf){
 }
 
 bool mut_delete_instruction(Buffer* buf){
+  if(!buf) return false;
+
   int line_count = str_count_lines(buf);
   if(line_count == 0) return false;
   int target_del = rand_range(0, line_count-1);
@@ -752,6 +820,7 @@ return buf_delete(buf, line_start, delete_len);
 }
 
 bool mut_duplicate_instruction(Buffer* buf){
+  if(!buf) return false;
   int line_count = str_count_lines(buf);
   if(line_count == 0) return false;
   int target_dup = rand_range(0, line_count-1);
@@ -789,6 +858,7 @@ bool mut_duplicate_instruction(Buffer* buf){
 }
 
 bool mut_shuffle_instructions(Buffer* buf){
+  if(!buf) return false;
   int line_count = str_count_lines(buf);
   if(line_count < 2) return false;
 
@@ -839,6 +909,7 @@ bool mut_shuffle_instructions(Buffer* buf){
 //runtime-level
 
 bool mut_stack_overflow(Buffer* buf){
+  if(!buf) return false;
   int line_count = str_count_lines(buf);
   if(line_count == 0) return false;
 
@@ -858,11 +929,13 @@ bool mut_stack_overflow(Buffer* buf){
 }
 
 bool mut_stack_underflow(Buffer* buf){
+  if(!buf) return false;
   int line_count = str_count_lines(buf);
   if(line_count == 0) return false;
   
-  char instr[] = "pop\n";
-  return buf_insert(buf, 0, instr, strlen(instr));
+  char firecrack[128];
+  int written = snprintf(firecrack, sizeof(firecrack), "pop\npop\npop\npop\npop\npop\npop\n");
+  return buf_insert(buf, 0, firecrack, written);
 }
 
 bool mut_callstack_overflow(Buffer* buf){
@@ -871,24 +944,24 @@ bool mut_callstack_overflow(Buffer* buf){
   char label_name[64];
   sprintf(label_name, "recur_%d", rand_int() % 1000);
 
-  char label_def[128];
-  int written = snprintf(label_def, sizeof(label_def), "label %s\n", label_name);
-  if(written < 0 || written >= (int)sizeof(label_def)){
+  char rec_func[128];
+  int written = snprintf(rec_func, sizeof(rec_func), "label %s\ncall %s\n", label_name, label_name);
+  if(written < 0 || written >= (int)sizeof(rec_func)){
     return false;
   }
+
+  if(!buf_insert(buf, 0, label_def, strlen(label_def))) return false;
 
   char call_instr[128];
   written = snprintf(call_instr, sizeof(call_instr), "call %s\n", label_name);
-  if(written < 0 || written >= (int)sizeof(label_def)){
+  if(written < 0 || written >= (int)sizeof(call_instr)){
     return false;
   }
   
-  if(!buf_insert(buf, 0, label_def, strlen(label_def))) return false;
+  size_t call_insert_pos = strlen(rec_func);
+ 
+  return  (!buf_insert(buf, call_insert_pos, call_instr, strlen(call_instr)));
 
-  size_t call_insert_pos = strlen(label_def);
-  if(!buf_insert(buf, call_insert_pos, call_instr, strlen(call_instr))) return false;
-
-  return true;
 }
 
 bool mut_divide_by_zero(Buffer* buf){
@@ -899,14 +972,14 @@ bool mut_divide_by_zero(Buffer* buf){
 
   size_t insert_pos = buf->length;
 
-  for(int i=0; i<lint_count; i++){
+  for(int i=0; i<line_count; i++){
     size_t line_start, line_len;
     if(!str_find_line(buf, i, &line_start, &line_len)) continue;
 
     size_t op_start, op_len;
     if(!get_opcode_on_line(buf, line_start, &op_start, &op_len)) continue;
 
-    if(op_len == 3 && strncmp(buf-->data + op_start, "hlt", 3) == 0){
+    if(op_len == 3 && strncmp(buf->data + op_start, "hlt", 3) == 0){
       insert_pos = line_start;
       break;
     }
@@ -919,6 +992,31 @@ bool mut_divide_by_zero(Buffer* buf){
   return buf_insert(buf, insert_pos, div_sequence, written);
 }
 
+bool mut_integer_overflow(Buffer* buf){
+  char overflow[] = 
+    "psh 2147483647\n"  // INT_MAX
+    "psh 1\n"
+    "add\n";
+  return buf_insert(buf, 0, overflow, strlen(overflow));
+}
+
+bool mut_uninitialized_register(Buffer* buf){
+  // Use register without setting it first
+  char uninit[] = "add A B\n";  // A and B not initialized
+  return buf_insert(buf, 0, uninit, strlen(uninit));
+}
+
+bool mut_invalid_jump(Buffer* buf){
+  char jump[] = "jmp nonexistent_label\n";
+  return buf_insert(buf, 0, jump, strlen(jump));
+}
+
+bool mut_lonely_return(Buffer* buf){
+  char ret[] = "return\n";
+  return buf_insert(buf, 0, ret, strlen(ret));
+}
+
+
 bool mut_break_label(Buffer* buf){
   if(!buf || buf->length == 0) return false;
 
@@ -929,12 +1027,12 @@ bool mut_break_label(Buffer* buf){
 
   for(int i=0; i < line_count; i++){
     size_t line_start, line_len;
-    if(!str_find_line(ubf, i, &line_start, &line_len)) continue;
+    if(!str_find_line(buf, i, &line_start, &line_len)) continue;
 
     size_t op_start, op_len;
     if(!get_opcode_on_line(buf, line_start, &op_start, &op_len)) continue;
 
-    if(op_len == 3 && strncmp(buf->data + op_start, "hlt", 3)){
+    if(op_len == 3 && strncmp(buf->data + op_start, "hlt", 3) == 0){
       insert_pos = line_start;
       break;
     }
@@ -949,7 +1047,8 @@ bool mut_break_label(Buffer* buf){
   if(written < 0 || written >= (int)sizeof(jmp_instruction)){
     return false;
   }
-  return buf->insert(buf, insert_pos, jmp_instruction, written);
+  bool result = buf_insert(buf, insert_pos, jmp_instruction, written);
+  return result;
 
 }
 bool mut_duplicate_label(Buffer* buf){
@@ -961,8 +1060,8 @@ bool mut_duplicate_label(Buffer* buf){
   char found_label[64] = {0};
 
   for(int i=0; i<line_count; i++){
-    size_t line_start, line_count;
-    if(!str_find_line(buf, i, &line_start, &line_count)) continue;
+    size_t line_start, line_len;
+    if(!str_find_line(buf, i, &line_start, &line_len)) continue;
 
     size_t op_start, op_len;
     if(!get_opcode_on_line(buf, line_start, &op_start, &op_len)) continue;
@@ -975,18 +1074,19 @@ bool mut_duplicate_label(Buffer* buf){
       }
       
       size_t label_start = op_end;
-      while(op_end < line_start + line_len && buf->data[op_end] != ' ' && buf->data[op_end] == '\t' && buf->data[op_end] == '\n'){
+      while(op_end < line_start + line_count && buf->data[op_end] != ' ' && buf->data[op_end] != '\t' && buf->data[op_end] != '\n'){
         op_end++;
       }
       size_t label_len = op_end - label_start;
 
-      if(label_len > 0 && label_end < sizeof(found_label)){
-        memcpy(foudn_label, buf->data + label_start, label_end);
-        found_label[label_len] = "\0";
+      if(label_len > 0 && label_len < sizeof(found_label)){
+        memcpy(found_label, buf->data + label_start, label_len);
+        found_label[label_len] = '\0';
         break;
       }
     }
   }
+  if(found_label[0] == '\0') return false;
 
   int insert_line = rand_range(0, line_count-1);
   size_t  insert_line_start, insert_line_len;
@@ -1010,13 +1110,13 @@ bool mut_infinite_loop(Buffer* buf){
   char loop_label[64];
   snprintf(loop_label, sizeof(loop_label), "inf_loop_%d", rand_int()%100000);
 
-  char label_def[128];
-  int written = snprintf(label_def, sizeof(label_def), "label %s", loop_label);
-  if(written < 0 || writtten > (int)sizeof(label_def)) return false;
+  char label_def[64];
+  int written = snprintf(label_def, sizeof(label_def), "label %s\n", loop_label);
+  if(written < 0 || written > (int)sizeof(label_def)) return false;
 
-  char jmp_instr[128];
-  int written = snprintf(jmp_instr, sizeof(jmp_instr), "jmp %s", loop_label);
-  if(written < 0 || written >= (int)sizeof(label_def)) return false;
+  char jmp_instr[64];
+  written = snprintf(jmp_instr, sizeof(jmp_instr), "jmp %s\n", loop_label);
+  if(written < 0 || written >= (int)sizeof(jmp_instr)) return false;
 
   if(!buf_insert(buf, 0, label_def, strlen(label_def))) return false;
   if(!buf_insert(buf, strlen(label_def), jmp_instr, strlen(jmp_instr))) return false;
@@ -1031,14 +1131,14 @@ bool mut_missing_halt(Buffer* buf){
   if(line_count == 0) return false;
   bool found_halt = false;
 
-  for(int i=line_count - 1; i>0; i--){
+  for(int i=line_count - 1; i>=0; i--){
     size_t line_start, line_len;
     if(!str_find_line(buf, i, &line_start, &line_len)) continue;
 
     size_t op_start, op_len;
     if(!get_opcode_on_line(buf, line_start, &op_start, &op_len)) continue;
 
-    if(op_len == 3 && strncmp(buf->data + start, "hlt", 3) == 0){
+    if(op_len == 3 && strncmp(buf->data + op_start, "hlt", 3) == 0){
       size_t delete_len = line_len;
 
       if(line_start + line_len < buf->length && buf->data[line_start + line_len] == '\n'){
@@ -1057,10 +1157,146 @@ bool mut_missing_halt(Buffer* buf){
 
 //formatting-level
 
-bool mut_excess_whitespace(Buffer* buf);
-bool mut_long_line(Buffer* buf);
-bool mut_empty_lines(Buffer* buf);
-bool mut_inject_comment(Buffer* buf);
+bool mut_excess_whitespace(Buffer* buf){
+  if(!buf || buf->length == 0) return false;
+
+  int line_count = str_count_lines(buf);
+  if(line_count == 0) return false;
+
+  int target_line = rand_range(0, line_count-1);
+  size_t line_start, line_len;
+
+  if(!str_find_line(buf, target_line, &line_start, &line_len)) return false;
+  
+  size_t space_pos;
+  bool found_space = false;
+
+  for(int i=line_start; i<line_start+line_len; i++){
+    if(buf->data[i] == ' '){
+      space_pos = i;
+      found_space = true;
+      break;
+    }
+  }
+  if(!found_space) return false;
+
+  int num_extra = rand_range(5, 30);
+  char* white_set = malloc(num_extra);
+  if(!white_set) return false;
+
+  for(int i=0; i<num_extra; i++){
+    white_set[i] = rand_chance(30)? '\t' : ' ';
+  }
+
+  bool result =  buf_insert(buf, space_pos, white_set, num_extra);
+  free(white_set);
+  return result;
+}
+
+bool mut_long_line(Buffer* buf){
+   if(!buf || buf->length == 0) return false;
+
+  int line_count = str_count_lines(buf);
+  if(line_count == 0) return false;
+
+  int target_line = rand_range(0, line_count-1);
+  size_t line_start, line_len;
+
+  if(!str_find_line(buf, target_line, &line_start, &line_len)) return false;
+  
+  size_t insert_pos = line_start + line_len;
+  
+  char long_comment[301];
+  long_comment[0] = ';';
+  long_comment[1] = ' ';
+  for(int i=2; i< 300; i++){
+    long_comment[i] = 'X';
+  }
+  long_comment[300] = '\0';
+
+  return buf_insert(buf, insert_pos, long_comment, 300);
+}
+
+bool mut_empty_lines(Buffer* buf){
+  if(!buf || buf->length == 0) return false;
+
+  int line_count = str_count_lines(buf);
+  if(line_count == 0) return false;
+
+  int target_line = rand_range(0, line_count-1);
+  size_t line_start, line_len;
+
+  if(!str_find_line(buf, target_line, &line_start, &line_len)) return false;
+  
+  size_t insert_pos = line_start + line_len;
+  
+  if(insert_pos < buf->length && buf->data[insert_pos] == '\n'){
+    insert_pos++;
+  }
+  int num_empty_lines = rand_range(3, 8);
+  for(int i=0; i<num_empty_lines; i++){
+    char empty[] = "\n";
+    if(!buf_insert(buf, insert_pos, empty, 1)) return false;
+    insert_pos++;
+  }
+  return true;
+}
+
+bool mut_inject_comment(Buffer* buf){
+  if(!buf || buf->length == 0) return false;
+  int line_count = str_count_lines(buf);
+  if(line_count == 0) return false;
+
+  int target_line = -1;
+
+  for(int attempt=0; attempt<5; attempt++){
+    int candidate = rand_range(0, line_count-1);
+      size_t s, len;
+
+      if(!str_find_line(buf, candidate, &s, &len)) continue;
+
+      for(size_t i=s ; i < s+len  ; i++){
+        if(buf->data[i] == ' '){
+          target_line = candidate;
+          break;
+        }
+      }
+      if(target_line != -1) break;
+    }
+
+  if(target_line == -1){
+    for(int i=0; i< line_count; i++){
+      size_t s, len;
+      if(!str_find_line(buf, i, &s, &len)) continue;
+
+      for(size_t j=s ; j < s+len  ; j++){
+        if(buf->data[j] == ' '){
+          target_line = i;
+          break;
+        }
+      }
+      if(target_line != -1) break;
+    }
+  }
+
+  if(target_line == - 1) return false;
+  
+  size_t line_start, line_len;
+  if(!str_find_line(buf, target_line, &line_start, &line_len)) return false;
+
+  size_t insert_pos = 0;
+  for(size_t i=line_start; i<line_start+line_len; i++){
+    if(buf->data[i] == ' '){
+      insert_pos = i;
+      break;
+    }
+  }
+  
+  char* comment = "; This is a comment\n";
+  size_t comment_len = strlen(comment);
+
+  return buf_insert(buf, insert_pos, comment, comment_len);
+}
 
 
 

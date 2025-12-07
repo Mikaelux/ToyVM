@@ -350,7 +350,6 @@ void free_program(Instr* program, int program_size) {
     free(program); // finally free the whole array
 }
 
-
 Label* parse_labels(Instr* program, int program_size, int*out_lb_count, int max_labels){
   *out_lb_count = 0;
   if(program_size < 1 || max_labels < 1) report_asm_error(ERR_IO, 350, NULL, "Program or Max labels improperly allocated");

@@ -5,6 +5,7 @@
 //random
 
 void init_rg();
+void init_rg_state(uint64_t seed);
 uint32_t pgc32();
 int rand_int();
 int rand_range(int min, int max);
@@ -86,6 +87,10 @@ bool mut_stack_overflow(Buffer* buf);
 bool mut_stack_underflow(Buffer* buf);
 bool mut_callstack_overflow(Buffer* buf);
 bool mut_divide_by_zero(Buffer* buf);
+bool mut_integer_overflow(Buffer* buf);
+bool mut_uninitialized_register(Buffer *buf);
+bool mut_invalid_jump(Buffer* buf);
+bool mut_lonely_return(Buffer *buf);
 bool mut_break_label(Buffer* buf);
 bool mut_duplicate_label(Buffer* buf);
 bool mut_infinite_loop(Buffer* buf);
