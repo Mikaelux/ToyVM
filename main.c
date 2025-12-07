@@ -86,7 +86,7 @@ void instr_set(VM*vm, const Instr* instrc){
 }
 
 void instr_load(VM*vm, const Instr* instrc){ 
-  if(vm->sp > STACKSIZE - 1){
+  if(vm->sp >= STACKSIZE - 1){
     report_vm_error(ERR_STACK_OVERFLOW, vm->ip, "LOAD", "Can't load anny more elements");
   }
   int value = instrc->operand1.value.reg;
@@ -169,11 +169,17 @@ void instr_ret(VM*vm, const Instr* instrc){
 
 void instr_inc(VM*vm, const Instr* instrc){
   int register_index = instrc->operand1.value.reg;
+  if(register_index < 0 || register_index >= NUMOFREGS){
+    report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, "INC", "Invalid register");
+  }
   vm->registers[register_index]++;
 }
 
 void instr_dec(VM*vm, const Instr* instrc){
   int register_index = instrc->operand1.value.reg;
+  if(register_index < 0 || register_index >= NUMOFREGS){
+    report_vm_error(ERR_REGISTER_OUT_OF_BOUNDS, vm->ip, "INC", "Invalid register");
+  }
   vm->registers[register_index]--;
 }
 
@@ -238,12 +244,17 @@ int main(){
     .running = true,
     .program = u_program,
   };
-
+  memset(vm.registers, 0, sizeof(vm.registers));
+  memset(vm.stack, 0, sizeof(vm.stack));
+  memset(vm.callstack, 0, sizeof(vm.callstack));
+  if (lb_count > MAXLABELS) {
+    report_vm_error(ERR_TOO_MANY_LABELS, 0, NULL, "Too many labels");
+  }
   memcpy(vm.labels, label_array, lb_count*sizeof(Label));
   vm.lb = lb_count;
   while (vm.running) {
-        if(vm->ip < 0 || vm->ip > u_program_size){
-          report_vm_error(ERR_PC_OUT_OF_BOUNDS, vm->ip, "index", "instruction pointer outside program size");
+        if(vm.ip < 0 || vm.ip > u_program_size){
+          report_vm_error(ERR_PC_OUT_OF_BOUNDS, vm.ip, "index", "instruction pointer outside program size");
         }
         const Instr* instr = &vm.program[vm.ip++];
         instr->execute(&vm, instr);

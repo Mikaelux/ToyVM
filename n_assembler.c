@@ -104,6 +104,7 @@ int parse_operand(char*token){
 
 char* lex_clean_line(const char* line) {
   if(!line) report_asm_error(ERR_ALLOC_FAIL, 110, line, "Issue with memory allocation");
+  size_t line_len = strlen(line);
   for (size_t i = 0; i < line_len; i++) {
     if (line[i] == '\0' && i < line_len - 1) {
       report_asm_error(ERR_INVALID_TOKEN, 0, NULL, "Null byte in input");
@@ -370,7 +371,7 @@ Label* parse_labels(Instr* program, int program_size, int*out_lb_count, int max_
       const char* label_name = program[i].operand1.value.label;
       size_t label_len = strlen(label_name);
 
-      if(label_name >= sizeof(temp_lb_array[lb_index].name)){
+      if(label_len >= sizeof(temp_lb_array[lb_index].name)){
         report_asm_error(ERR_LABEL_TOO_LONG, 373, label_name, "Label is too long");
       }
       strncpy(temp_lb_array[lb_index].name, label_name, sizeof(temp_lb_array[lb_index].name) - 1);
@@ -388,7 +389,7 @@ Label* parse_labels(Instr* program, int program_size, int*out_lb_count, int max_
     }
   }
   if(!has_halt){
-    report_asm_error(ERR_MISSING_HALT, vm->ip, "halt", "Program missing a halt.")
+    report_asm_error(ERR_MISSING_HALT, 391, "halt", "Program missing a halt.");
   }
   *out_lb_count = lb_index;
   return temp_lb_array;
@@ -464,7 +465,17 @@ void define_program(Instr **out_program, int *out_size, Label **out_labels, int 
     
     int label_count = 0;
     Label *lb_array = parse_labels(a_program, a_program_size, &label_count, MAXLABELS);
-    if(!lb_array) report_asm_error(ERR_ALLOC_FAIL, 446, "LABELS", "Label array allocation and/or creation failed");
+    if(!lb_array){
+      free_program(a_program, a_program_size);
+      for(int i=0; i < linecount; i++){
+        free(lines[i]);
+        if(tokens[i]) free(tokens[i]);
+      }
+      free(lines);
+      free(tokens);
+      report_asm_error(ERR_ALLOC_FAIL, 446, "LABELS", "Label array allocation and/or creation failed");
+
+  }
     
     *out_program = a_program;
     *out_size = a_program_size;

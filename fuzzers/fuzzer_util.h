@@ -1,4 +1,4 @@
-#IFNDEF FUZZER_UTIL_H
+#ifndef FUZZER_UTIL_H
 #define FUZZER_UTIL_H
 
 //UTILITY
@@ -29,7 +29,10 @@ void buf_free(Buffer *buf);
 bool buf_grow(Buffer *buf, size_t min_capacity);
 bool buf_insert(Buffer* buf, size_t pos, char* data, size_t len);
 bool buf_delete(Buffer *buf, size_t pos, size_t len);
+bool buf_append(Buffer* buf, char* data, size_t len);
 bool buf_replace(Buffer* buf, size_t pos, size_t old_len, char* new_data, size_t new_len);
+bool buf_append_str(Buffer* buf, char* str);
+void buf_clear(Buffer* buf);
 
 //FILE IO 
 
@@ -50,7 +53,8 @@ typedef struct NumberCor{
   size_t start;
   size_t len;
 } NumberCor;
-int *find_next_num(Buffer* buf, size_t from, size_t *num_start, size_t num_len);
+bool find_next_num(Buffer* buf, size_t from, NumberCor* numz);
+bool find_next_reg(Buffer* buf, size_t from, size_t *reg_start);
 //MUTATION
 //byte-level
 bool mut_flip_bit(Buffer* buf);
@@ -66,6 +70,10 @@ bool mut_invalid_register(Buffer* buf);
 bool mut_swap_operands(Buffer* buf);
 
 //instruction-level
+int generate_imm_value();
+char* generate_valid_instruction();
+char* generate_chaos_instruction();
+char* generate_instr();
 
 bool mut_insert_instruction(Buffer* buf);
 bool mut_delete_instruction(Buffer* buf);
@@ -91,8 +99,8 @@ bool mut_empty_lines(Buffer* buf);
 bool mut_inject_comment(Buffer* buf);
 
 
-extern const char* opcodes[];
-extern const int boundary_vals[];
+extern char* opcodes[];
+extern char* boundary_vals[];
 
 
 
