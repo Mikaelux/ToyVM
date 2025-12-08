@@ -48,8 +48,8 @@ typedef enum {
     ERR_UNKNOWN //catch-all error incase not defined
 } Errors;
 
-void report_vm_error(Errors err, int pc, const char* instr, const char* detail);
-void report_asm_error(Errors err, int pc, const char* token, const char* detail);
+void report_vm_error(Errors err, int pc, const char* instr, const char* detail)  __attribute__((noreturn));
+void report_asm_error(Errors err, int pc, const char* token, const char* detail)  __attribute__((noreturn));
 
 
 #endif

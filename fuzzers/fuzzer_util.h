@@ -1,8 +1,23 @@
 #ifndef FUZZER_UTIL_H
 #define FUZZER_UTIL_H
 
+#include<stdio.h>
+#include<stdlib.h>
+#include <string.h>
+#include<stdint.h>
+#include<unistd.h>
+#include<sys/random.h>
+#include<errno.h>
+#include<sys/stat.h>
+#include<limits.h>
+#include<sys/types.h>
+#include<stdint.h>
+#include<time.h>
+#include"../header.h"
+
 //UTILITY
 //random
+char* strdup (const char* s);
 
 void init_rg();
 void init_rg_state(uint64_t seed);

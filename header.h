@@ -5,7 +5,7 @@
 #include<stdbool.h>
 #include<stddef.h>
 
-
+#define MAXSTEPS 100000
 #define CALLSIZE 124
 #define MAXLABELS 124
 #define STACKSIZE 256
@@ -117,6 +117,8 @@ void free_program(Instr* program, int program_size);
 
 //label stuff, just for reference
 Label* parse_labels(Instr* program, int program_size, int*out_lb_count, int max_labels);
+
+int vm_main(void);
 
 #endif
 

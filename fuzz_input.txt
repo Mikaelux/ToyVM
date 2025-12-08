@@ -1,0 +1,9 @@
+psh 10
+þpsh 20
+add
+qop
+return
+psh 80
+psh 0
+div
+hlt

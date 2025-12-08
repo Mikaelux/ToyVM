@@ -5,7 +5,7 @@
 #include "header.h"
 #include"error.h"
 
-#define MAXSTEPS 100000 //for catching infinite loops early and preventing DDOS 
+ //for catching infinite loops early and preventing DDOS 
 // Include the comparison function and flags structures
 
 int assess_operand(VM* vm, Operand op){
@@ -32,6 +32,7 @@ int assess_operand(VM* vm, Operand op){
 }
 
 void instr_psh(VM*vm, const Instr* instrc){
+  (void)instrc;
   if(vm->sp>=STACKSIZE - 1){
      report_vm_error(ERR_STACK_OVERFLOW, vm->ip, "PSH", "Stack overflow, can't push further\n");
   }
@@ -39,6 +40,7 @@ void instr_psh(VM*vm, const Instr* instrc){
 }
 
 void instr_add(VM*vm, const Instr* instrc){
+  (void)instrc;
   if(vm->sp<1) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "ADD", "Stack doesn't contain enough operands for stack operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
@@ -46,20 +48,23 @@ void instr_add(VM*vm, const Instr* instrc){
 }
 
 void instr_sub(VM*vm, const Instr* instrc){  
+  (void)instrc;
 if(vm->sp<1) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "SUB", "Stack doesn't contain enough operands for stack operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
   vm->stack[++vm->sp] = op2-op1;
 }
 
-void instr_mul(VM*vm, const Instr* instrc){ 
+void instr_mul(VM*vm, const Instr* instrc){  (void)instrc;
+
  if(vm->sp<1) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "MUL", "Stack doesn't contain enough operands for stack operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
   vm->stack[++vm->sp] = op1*op2;
 }
 
-void instr_div(VM*vm, const Instr* instrc){ 
+void instr_div(VM*vm, const Instr* instrc){  (void)instrc;
+
  if(vm->sp<1) report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "DIV", "Stack doesn't contain enough operands for stack operation");
   int op1 = vm->stack[vm->sp--];
   int op2 = vm->stack[vm->sp--];
@@ -70,7 +75,8 @@ void instr_div(VM*vm, const Instr* instrc){
   vm->stack[++vm->sp] = op2/op1;
 }
 
-void instr_pop(VM*vm, const Instr* instrc){
+void instr_pop(VM*vm, const Instr* instrc){ (void)instrc;
+
   if(vm->sp<0){
     report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "POP","Stack is empty, can't pop\n");
 
@@ -95,12 +101,16 @@ void instr_load(VM*vm, const Instr* instrc){
   vm->stack[++vm->sp] = reg_value;
 }
 
-void instr_hlt(VM*vm, const Instr* instrc){
+void instr_hlt(VM*vm, const Instr* instrc){ (void)instrc;
+
   vm->running=false;
 printf("Program has ended\n");
 }
 
-void instr_lbl(VM *vm, const Instr* instrc){}
+void instr_lbl(VM *vm, const Instr* instrc){
+  (void)vm;
+  (void)instrc;
+}
 
 void instr_cmp(VM*vm, const Instr* instrc){
   int a = assess_operand(vm, instrc->operand1);
@@ -163,6 +173,7 @@ void instr_call(VM*vm, const Instr* instrc){
 }
 
 void instr_ret(VM*vm, const Instr* instrc){
+  (void)instrc;
   if(vm->call_sp < 0) report_vm_error(ERR_CALLSTACK_UNDERFLOW, vm->ip, "CALL", "Call stack empty");
   vm->ip = vm->callstack[vm->call_sp--];
 }
@@ -227,7 +238,7 @@ const Instr program[] = {
 const int program_size = sizeof(program) / sizeof(program[0]);
 */
 
-int main(){
+int vm_main(){
   Instr *u_program = NULL;
   int u_program_size = 0;
   Label *label_array = NULL;

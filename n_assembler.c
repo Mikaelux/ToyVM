@@ -111,7 +111,7 @@ char* lex_clean_line(const char* line) {
     }
   }
   const char* comment_pos = strchr(line, ';');
-  int useful_len = comment_pos ? (comment_pos - line) : strlen(line);
+  size_t useful_len = comment_pos ? (size_t)(comment_pos - line) : strlen(line);
     
   char* result = malloc(useful_len + 1);
   if(!result) report_asm_error(ERR_ALLOC_FAIL, 110, line, "Issue with memory allocation");
@@ -119,7 +119,7 @@ char* lex_clean_line(const char* line) {
   int write_pos = 0;
   bool prev_space = false;
     
-  for(int i = 0; i < useful_len; i++) {
+  for(size_t i = 0; i < useful_len; i++) {
     char c = line[i];
         
       if(c == '\n' || c == '\r' || isspace((unsigned char)c)) {
@@ -440,7 +440,7 @@ void define_program(Instr **out_program, int *out_size, Label **out_labels, int 
             free(tokens);
             for(int j = 0; j < linecount; j++) free(lines[j]);
             free(lines);
-            report_asm_error(ERR_INVALID_TOKEN, 375, lines[i], "Tokenization failed for line");
+            report_asm_error(ERR_INVALID_TOKEN, 375, NULL, "Tokenization failed for line");
         }
     }
     
