@@ -1,3 +1,5 @@
-- Implement runtime and structure mutation functions
-- write an error log and inter-file comm for results
-- think about RL python model and connections
+- Implement coverage bitmap and saving corpuses (corpses? ☠️  corpi.)
+- so far the error system is chill i think? Look back at file handing in RL_fuzzer
+- Rename RL_fuzzer, thats a placeholder name
+- Study up on RL python model
+
