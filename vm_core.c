@@ -81,7 +81,7 @@ void instr_pop(VM*vm, const Instr* instrc){ (void)instrc;
     report_vm_error(ERR_STACK_UNDERFLOW, vm->ip, "POP","Stack is empty, can't pop\n");
 
   }
-  printf("The value popped is %d\n", vm->stack[vm->sp--]);
+  vm->sp--;
 }
 
 void instr_set(VM*vm, const Instr* instrc){
@@ -104,7 +104,6 @@ void instr_load(VM*vm, const Instr* instrc){
 void instr_hlt(VM*vm, const Instr* instrc){ (void)instrc;
 
   vm->running=false;
-printf("Program has ended\n");
 }
 
 void instr_lbl(VM *vm, const Instr* instrc){

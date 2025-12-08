@@ -205,10 +205,12 @@ char** split_lines(FILE* file, int *out){
   }
 
   char buffer[MAX_LINES_LENGTH];
-  int count = 0;
+    int count = 0;
 
   while(fgets(buffer, sizeof(buffer), file) && count<MAX_LINES){
-    if(strchr(buffer, '\n') == NULL && !feof(file)){
+
+  size_t len = strlen(buffer);
+    if(len == sizeof(buffer) - 1 && buffer[len - 1] != '\n'){
       report_asm_error(ERR_LINE_TOO_LONG, 209, buffer, "Line is longer than limit size");
     }
     char* cleaned_lines = lex_clean_line(buffer);
@@ -240,7 +242,7 @@ char** tokenizer(char*beta_token){
   int count = 0;
   char*token = strtok(beta_token, " ");
 
-  while(token != NULL && count<3){
+  while(token != NULL && count< max_token){
     if(strlen(token) >= MAX_TOKEN_LENGTH) report_asm_error(ERR_TOKEN_TOO_LONG, 243, NULL, "Token exceeds maximum length");
     words[count] = strdup(token);
     if(!words[count]){
@@ -401,7 +403,7 @@ void define_program(Instr **out_program, int *out_size, Label **out_labels, int 
     Instr *a_program = NULL;
 
     // Phase 1: Lexical Analysis
-    FILE* code = fopen("code.txt", "r");
+    FILE* code = fopen("fuzz_input.txt", "r");
     if(!code) {
         report_asm_error(ERR_IO, 335, NULL, "Couldn't open code file");
     }
