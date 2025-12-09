@@ -1,6 +1,0 @@
-call func
-hlt
-label func
-psh 42
-pop
-ret
