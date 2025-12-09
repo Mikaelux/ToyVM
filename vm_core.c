@@ -5,8 +5,26 @@
 #include "header.h"
 #include"error.h"
 
- //for catching infinite loops early and preventing DDOS 
-// Include the comparison function and flags structures
+
+void vm_coverage_reset(){
+    memset(vm_coverage_map, 0, VM_COVERAGE_MAP_SIZE);
+  __prev_vm_loc = 0;
+}
+
+void vm_coverage_write(const char* path){
+  FILE *f = fopen(path, "wb");
+  if(!f) return;
+  fwrite(vm_coverage_map, 1, VM_COVERAGE_MAP_SIZE, f);
+  fclose(f);
+}
+
+uint32_t vm_coverage_count_bits(){
+  uint32_t count = 0;
+  for(int i=0; i< VM_COVERAGE_MAP_SIZE; i++){
+    if(vm_coverage_map[i] > 0) count ++;
+  }
+  return count;
+}
 
 int assess_operand(VM* vm, Operand op){
   if(!vm){
@@ -237,47 +255,4 @@ const Instr program[] = {
 const int program_size = sizeof(program) / sizeof(program[0]);
 */
 
-int vm_main(){
-  Instr *u_program = NULL;
-  int u_program_size = 0;
-  Label *label_array = NULL;
-  int lb_count = 0;
 
-  define_program(&u_program, &u_program_size, &label_array, &lb_count);
-
-    VM vm = {
-    .call_sp = -1,
-    .stepcount = 0,
-    .lb = 0,
-    .sp = -1,
-    .ip= 0,
-    .running = true,
-    .program = u_program,
-  };
-  
-  memset(vm.registers, 0, sizeof(vm.registers));
-  for(int i=0; i<NUMOFREGS; i++){
-    vm.registers[i] = 0;
-  }
-  memset(vm.stack, 0, sizeof(vm.stack));
-  memset(vm.callstack, 0, sizeof(vm.callstack));
-  if (lb_count > MAXLABELS) {
-    report_vm_error(ERR_TOO_MANY_LABELS, 0, NULL, "Too many labels");
-  }
-  memcpy(vm.labels, label_array, lb_count*sizeof(Label));
-  vm.lb = lb_count;
-  while (vm.running) {
-        if(vm.ip < 0 || vm.ip > u_program_size){
-          report_vm_error(ERR_PC_OUT_OF_BOUNDS, vm.ip, "index", "instruction pointer outside program size");
-        }
-        const Instr* instr = &vm.program[vm.ip++];
-        instr->execute(&vm, instr);
-        vm.stepcount++;
-
-        if(vm.stepcount == MAXSTEPS){
-          vm.running = false;
-         }
-    }
-  free_program(u_program, u_program_size);
-  return 0;
-}

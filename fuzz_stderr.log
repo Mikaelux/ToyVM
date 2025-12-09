@@ -1,1 +1,1 @@
-{"stage":"runtime","error":28,"ip":335,"instruction":"(null)","msg":"Couldn't open code file"}
+{"stage":"runtime","error":3,"ip":167,"instruction":"ret","msg":"Operand count is too low for instruction used"}

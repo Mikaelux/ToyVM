@@ -4,6 +4,7 @@
 #include<stdlib.h>
 #include<stdbool.h>
 #include<stddef.h>
+#include<stdint.h>
 
 #define MAXSTEPS 100000
 #define CALLSIZE 124
@@ -118,7 +119,47 @@ void free_program(Instr* program, int program_size);
 //label stuff, just for reference
 Label* parse_labels(Instr* program, int program_size, int*out_lb_count, int max_labels);
 
-int vm_main(void);
+//Coverage-related
+
+#define VM_COVERAGE_MAP_SIZE 65536
+#define ASM_COVERAGE_MAP_SIZE 65536
+
+extern uint8_t vm_coverage_map[VM_COVERAGE_MAP_SIZE];
+extern uint8_t asm_coverage_map[ASM_COVERAGE_MAP_SIZE];
+
+extern uint32_t __prev_vm_loc;
+extern uint32_t __prev_asm_loc;
+
+static inline uint32_t hash_edge(uint32_t prev, uint32_t cur) {
+    uint32_t x = cur ^ (prev >> 1);
+    x ^= x >> 4;
+    x ^= x << 10;
+    x ^= x >> 7;
+    return x;
+}
+
+static inline void record_vm(uint32_t loc){
+  uint32_t edge = hash_edge(__prev_vm_loc, loc) % VM_COVERAGE_MAP_SIZE;
+  vm_coverage_map[edge]++;
+  __prev_vm_loc = loc >> 1;
+}
+
+static inline void record_asm(uint32_t loc){
+  uint32_t edge = hash_edge(__prev_asm_loc, loc) % ASM_COVERAGE_MAP_SIZE;
+  asm_coverage_map[edge]++;
+  __prev_asm_loc = loc >> 1;
+}
+
+void vm_coverage_reset();
+void vm_coverage_write(const char* path);
+uint32_t vm_coverage_count_bits();
+
+void asm_coverage_reset();
+void asm_coverage_write(const char* path);
+uint32_t asm_coverage_count_bits();
+
+
+
 
 #endif
 

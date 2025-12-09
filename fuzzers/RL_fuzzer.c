@@ -20,17 +20,21 @@
 #define CRASHES_DIR "crashes"
 #define CORPUS_DIR "corpus"
 #define STATS_FILE "fuzz_stats.txt"
+#define COVERAGE_DIR "coverage"
+#define VM_COVERAGE_FILE "coverage/vm_coverage.txt"
+#define ASM_COVERAGE_FILE "coverage/asm_coverage.txt"
 
 typedef struct {
     int total_runs;
     int crashes;
     int hangs;
+    uint32_t vm_new_cov;
+    uint32_t asm_new_cov;
     int asm_errors;
     int vm_errors;
     int successful_runs;
     int empty_programs;
     
-    // Detailed error tracking
     int syntax_errors;
     int stack_overflows;
     int stack_underflows;
@@ -39,7 +43,7 @@ typedef struct {
     int label_errors;
     int register_errors;
     
-    // Performance
+    
     uint64_t start_time;
     uint64_t total_exec_time_ms;
 } FuzzStats;
@@ -49,7 +53,7 @@ typedef struct {
     Buffer* content;
 } SeedInput;
 
-// Seed corpus - valid programs to mutate
+
 static const char* seed_programs[] = {
     // Basic arithmetic
     "psh 10\n"
@@ -58,7 +62,7 @@ static const char* seed_programs[] = {
     "pop\n"
     "hlt\n",
     
-    // Register operations
+    // reg 
     "set A 5\n"
     "set B 10\n"
     "load A\n"
@@ -67,7 +71,7 @@ static const char* seed_programs[] = {
     "pop\n"
     "hlt\n",
     
-    // Comparison and jump
+    // cmp n jmp
     "set C 3\n"
     "set D 3\n"
     "cmp C D\n"
@@ -79,15 +83,15 @@ static const char* seed_programs[] = {
     "pop\n"
     "hlt\n",
     
-    // Function call
+    // call n ret
     "call func\n"
     "hlt\n"
     "label func\n"
     "psh 42\n"
     "pop\n"
-    "return\n",
+    "ret\n",
     
-    // Loop with counter
+    // loop
     "set A 5\n"
     "label loop\n"
     "dec A\n"
@@ -95,7 +99,7 @@ static const char* seed_programs[] = {
     "jg loop\n"
     "hlt\n",
     
-    // Complex arithmetic
+    // math
     "psh 100\n"
     "psh 50\n"
     "sub\n"
@@ -106,6 +110,23 @@ static const char* seed_programs[] = {
     
     NULL
 };
+
+uint8_t vm_coverage_map[VM_COVERAGE_MAP_SIZE];
+uint8_t asm_coverage_map[ASM_COVERAGE_MAP_SIZE];
+
+uint32_t __prev_vm_loc = 0;
+uint32_t __prev_asm_loc = 0;
+
+uint8_t vm_virgin_map[VM_COVERAGE_MAP_SIZE];
+void init_vm_virgin(){ memset(vm_virgin_map, 0xFF, VM_COVERAGE_MAP_SIZE);}
+
+uint8_t asm_virgin_map[ASM_COVERAGE_MAP_SIZE];
+void init_asm_virgin(){ memset(asm_virgin_map, 0xFF, ASM_COVERAGE_MAP_SIZE);}
+
+
+static inline uint32_t total_new_cov(FuzzStats* stats) {
+    return stats->vm_new_cov + stats->asm_new_cov;
+}
 
 // Write buffer content to temp file
 static bool write_test_case(Buffer* buf) {
@@ -143,6 +164,25 @@ static void save_hang(Buffer* buf, FuzzStats* stats) {
         fclose(f);
         printf("⏱️  Saved hang to: %s\n", filename);
     }
+}
+
+static void save_corpus(Buffer* buf, FuzzStats* stats, int run){
+  char filename[512];
+  snprintf(filename, sizeof(filename), 
+           "%s/corpus_%d_%ld", 
+           CORPUS_DIR, total_new_cov(stats), time(NULL));
+
+  FILE* f = fopen(filename, "w");
+  if(f){
+    fprintf(f, "; Responsible run was %d\n", run);
+    fprintf(f, "; Program found %d new bits in VM, %d in ASM || Total: %d\n"
+            , stats->vm_new_cov, stats->asm_new_cov, total_new_cov(stats));
+
+    fprintf(f, "; Total runs: %d\n\n", stats->total_runs);
+    fwrite(buf->data, 1, buf->length, f);
+    fclose(f);
+    printf("✍️ Saved new corpus to %s\n", filename);
+  }
 }
 
 // Categorize error types for statistics
@@ -267,16 +307,23 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats) {
         if (labels && label_count > 0) {
             memcpy(vm.labels, labels, label_count * sizeof(Label));
         }
-        
-        // Run VM
+        init_vm_virgin();
+        init_asm_virgin();
+
+        vm_coverage_reset();
+        asm_coverage_reset();
         while (vm.running) {
+       
             if (vm.ip < 0 || vm.ip >= program_size) {
                 report_vm_error(ERR_PC_OUT_OF_BOUNDS, vm.ip, "index", 
                                "Instruction pointer out of bounds");
             }
-            
             const Instr* instr = &vm.program[vm.ip++];
             instr->execute(&vm, instr);
+
+            record_vm(vm.ip);
+            record_asm(instr->ID);
+
             vm.stepcount++;
             
             if (vm.stepcount >= MAXSTEPS) {
@@ -290,53 +337,82 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats) {
         if (labels) free(labels);
         exit(ERR_OK);
     }
-    
+
     // Parent process - monitor child
-    int status;
-    time_t start = time(NULL);
+  int status;
+  time_t start = time(NULL);
     
-    while (1) {
-        int result = waitpid(pid, &status, WNOHANG);
+  while (1) {
+  int result = waitpid(pid, &status, WNOHANG);
         
-        if (result == -1) {
-            perror("waitpid");
-            return ERR_UNKNOWN;
-        }
+  if (result == -1) {
+    perror("waitpid");
+    return ERR_UNKNOWN;
+  }
         
-        if (result > 0) {
-            // Child exited
-            if (WIFEXITED(status)) {
-                int exit_code = WEXITSTATUS(status);
-                
-                if (exit_code == ERR_OK) {
-                    stats->successful_runs++;
-                } else {
-                    categorize_error(exit_code, stats);
-                }
-                
-                return exit_code;
-            }
-            
-            if (WIFSIGNALED(status)) {
-                int sig = WTERMSIG(status);
-                stats->crashes++;
-                save_crash(test_input, "Signal", sig, stats);
-                return ERR_UNKNOWN;
-            }
-        }
-        
-        // Check timeout
-        if (difftime(time(NULL), start) >= TIMEOUT_SECONDS) {
-            kill(pid, SIGKILL);
-            waitpid(pid, &status, 0);
-            stats->hangs++;
-            save_hang(test_input, stats);
-            return ERR_TIMEOUT;
-        }
-        
-        struct timespec ts = {0, 10 * 1000 * 1000};
-        nanosleep(&ts, NULL);
+  if (result > 0) {
+    // Child exited
+    if (WIFEXITED(status)) {
+      int exit_code = WEXITSTATUS(status);
+          // Coverage tracking
+    bool new_vm = false;
+    bool new_asm = false;
+
+    for(size_t i = 0; i < VM_COVERAGE_MAP_SIZE; i++){
+      if(vm_coverage_map[i] > 0 && vm_virgin_map[i] == 0xFF){
+        vm_virgin_map[i] = 0;
+        new_vm = true;
+      }
+      if(asm_coverage_map[i] > 0 && asm_virgin_map[i] == 0xFF){
+          asm_virgin_map[i] = 0;
+          new_asm = true;
+      }
     }
+
+    if(new_vm || new_asm){
+      int curr_run = stats->total_runs;
+      if(new_vm){
+        stats->vm_new_cov += vm_coverage_count_bits();
+        vm_coverage_write(VM_COVERAGE_FILE);
+      }
+      if(new_asm){
+        stats->asm_new_cov += asm_coverage_count_bits(); 
+        asm_coverage_write(ASM_COVERAGE_FILE);
+      }
+
+      save_corpus(test_input, stats, curr_run);
+    } 
+          
+      if (exit_code == ERR_OK) {
+        stats->successful_runs++;
+      } else {
+        categorize_error(exit_code, stats);
+      }
+                
+      return exit_code;
+    }
+            
+    if (WIFSIGNALED(status)) {
+      int sig = WTERMSIG(status);
+      stats->crashes++;
+      save_crash(test_input, "Signal", sig, stats);
+      return ERR_UNKNOWN;
+    }
+
+
+  }
+        // Check timeout
+    if (difftime(time(NULL), start) >= TIMEOUT_SECONDS) {
+      kill(pid, SIGKILL);
+      waitpid(pid, &status, 0);
+      stats->hangs++;
+      save_hang(test_input, stats);
+      return ERR_TIMEOUT;
+    }
+        
+    struct timespec ts = {0, 10 * 1000 * 1000};
+    nanosleep(&ts, NULL);
+  }
 }
 
 // Apply random mutations to buffer
@@ -411,6 +487,15 @@ static void print_stats(FuzzStats* stats) {
            stats->hangs, 
            100.0 * stats->hangs / stats->total_runs);
     printf("\n");
+    printf("VM Coverage:             %d (%.1f%%)\n", 
+           stats->vm_new_cov, 
+           100.0 * stats->vm_new_cov / stats->total_runs);
+    printf("\n");
+    printf("ASM Coverage:             %d (%.1f%%)\n", 
+           stats->asm_new_cov, 
+           100.0 * stats->asm_new_cov / stats->total_runs);
+    printf("\n");
+
     printf("Assembler errors:  %d (%.1f%%)\n", 
            stats->asm_errors, 
            100.0 * stats->asm_errors / stats->total_runs);
@@ -441,6 +526,7 @@ static void save_stats(FuzzStats* stats) {
     fprintf(f, "elapsed_sec: %.2f\n", elapsed);
     fprintf(f, "crashes: %d\n", stats->crashes);
     fprintf(f, "hangs: %d\n", stats->hangs);
+    fprintf(f, "new_discoveries: %d\n", total_new_cov(stats));
     fprintf(f, "asm_errors: %d\n", stats->asm_errors);
     fprintf(f, "vm_errors: %d\n", stats->vm_errors);
     fprintf(f, "successful: %d\n", stats->successful_runs);
@@ -453,7 +539,7 @@ int main(int argc, char** argv) {
     init_rg();
     dir_create(CRASHES_DIR);
     dir_create(CORPUS_DIR);
-    
+    dir_create(COVERAGE_DIR);
     FuzzStats stats = {0};
     stats.start_time = time_now_ms();
     
@@ -484,8 +570,8 @@ int main(int argc, char** argv) {
         buf_append_str(test_buf, (char*)seed);
         
         // Apply mutations
-        int num_mutations = rand_range(1, 5);
-        apply_mutations(test_buf, num_mutations);
+        /*int num_mutations = rand_range(1, 3);*/
+        apply_mutations(test_buf, 0);
         
         // Run test
         Errors result = run_single_test(test_buf, &stats);
