@@ -1,4 +1,4 @@
-- Implement coverage bitmap and saving corpuses (corpses? ☠️  corpi.)
+- Fix error with coverage not being implemented, adn the ret no ops error
 - so far the error system is chill i think? Look back at file handing in RL_fuzzer
 - Rename RL_fuzzer, thats a placeholder name
 - Study up on RL python model
