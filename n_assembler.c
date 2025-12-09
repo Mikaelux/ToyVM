@@ -56,7 +56,7 @@ Instr_template lookup[OPCODE]= {
 };
 
 const char* operation_names[] = {
-  "psh", "add", "sub", "mul", "div", "pop", "set", "load", "hlt", "label", "jmp", "je", "jne", "jg", "jge", "jl", "jle", "cmp", "call", "return", "inc", "dec"
+  "psh", "add", "sub", "mul", "div", "pop", "set", "load", "hlt", "label", "jmp", "je", "jne", "jg", "jge", "jl", "jle", "cmp", "call", "ret", "inc", "dec"
 } ;
 //general purpose aid function
 
@@ -186,7 +186,9 @@ bool isValidInstruction(char**words, int *index){
   }
 
   if(word_count == 0) return false;
-
+  if(found_opcode == -1){
+    report_asm_error(ERR_UNKNOWN_OPCODE, 190, words[0], "unknwon instruction");
+  }
    //part where we validate operands 
   Instr_template operation_beta = lookup[found_opcode];
 

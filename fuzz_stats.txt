@@ -1,8 +1,8 @@
 total_runs: 10000
-elapsed_sec: 115.50
+elapsed_sec: 116.09
 crashes: 0
 hangs: 0
 new_discoveries: 0
-asm_errors: 1632
+asm_errors: 1636
 vm_errors: 0
-successful: 8368
+successful: 8364

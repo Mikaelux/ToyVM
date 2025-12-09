@@ -377,7 +377,7 @@ char* opcodes[] = {
     "psh", "add", "sub", "mul", "div", "pop", 
     "set", "load", "hlt", "label", "jmp", 
     "je", "jne", "jg", "jge", "jl", "jle",
-    "cmp", "call", "return", "inc", "dec",
+    "cmp", "call", "ret", "inc", "dec",
   NULL
 };
 int num_opcodes = sizeof(opcodes) / sizeof(opcodes[0]) - 1;
