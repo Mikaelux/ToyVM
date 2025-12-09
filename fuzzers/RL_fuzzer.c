@@ -1,5 +1,7 @@
 // fuzzer_main.c
-
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,12 +11,14 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <errno.h>
+#include <dirent.h>
+#include "../coverage.h"
 #include "../header.h"
 #include "../error.h"
 #include "fuzzer_util.h"
 
 // Configuration
-#define MAX_ITERATIONS 10000
+#define MAX_ITERATIONS 100000
 #define TIMEOUT_SECONDS 5
 #define TEMP_INPUT_FILE "fuzz_input.txt"
 #define CRASHES_DIR "crashes"
@@ -23,6 +27,12 @@
 #define COVERAGE_DIR "coverage"
 #define VM_COVERAGE_FILE "coverage/vm_coverage.txt"
 #define ASM_COVERAGE_FILE "coverage/asm_coverage.txt"
+
+#define MAX_CORPUS 128
+#define MAX_CORPUS_PATH 512
+
+char corpus[MAX_CORPUS][MAX_CORPUS_PATH];
+int corps_count = 0;
 
 typedef struct {
     int total_runs;
@@ -48,74 +58,21 @@ typedef struct {
     uint64_t total_exec_time_ms;
 } FuzzStats;
 
-typedef struct {
-    char* seed_name;
-    Buffer* content;
-} SeedInput;
 
+int plant_seeds(const char* path){
+  DIR* d = opendir(path);
+  if(!d) return -1;
+  struct dirent *entry;
 
-static const char* seed_programs[] = {
-    // Basic arithmetic
-    "psh 10\n"
-    "psh 20\n"
-    "add\n"
-    "pop\n"
-    "hlt\n",
-    
-    // reg 
-    "set A 5\n"
-    "set B 10\n"
-    "load A\n"
-    "load B\n"
-    "mul\n"
-    "pop\n"
-    "hlt\n",
-    
-    // cmp n jmp
-    "set C 3\n"
-    "set D 3\n"
-    "cmp C D\n"
-    "je equal\n"
-    "psh 999\n"
-    "pop\n"
-    "label equal\n"
-    "psh 123\n"
-    "pop\n"
-    "hlt\n",
-    
-    // call n ret
-    "call func\n"
-    "hlt\n"
-    "label func\n"
-    "psh 42\n"
-    "pop\n"
-    "ret\n",
-    
-    // loop
-    "set A 5\n"
-    "label loop\n"
-    "dec A\n"
-    "cmp A 0\n"
-    "jg loop\n"
-    "hlt\n",
-    
-    // math
-    "psh 100\n"
-    "psh 50\n"
-    "sub\n"
-    "psh 2\n"
-    "div\n"
-    "pop\n"
-    "hlt\n",
-    
-    NULL
-};
-
-uint8_t vm_coverage_map[VM_COVERAGE_MAP_SIZE];
-uint8_t asm_coverage_map[ASM_COVERAGE_MAP_SIZE];
-
-uint32_t __prev_vm_loc = 0;
-uint32_t __prev_asm_loc = 0;
+  while((entry = readdir(d)) != NULL){
+    if(entry->d_type == DT_REG && corps_count < MAX_CORPUS){
+      snprintf(corpus[corps_count], MAX_CORPUS_PATH, "%s/%s", path, entry->d_name);
+      corps_count++;
+    }
+  }
+  closedir(d);
+  return 0;
+}
 
 uint8_t vm_virgin_map[VM_COVERAGE_MAP_SIZE];
 void init_vm_virgin(){ memset(vm_virgin_map, 0xFF, VM_COVERAGE_MAP_SIZE);}
@@ -169,7 +126,7 @@ static void save_hang(Buffer* buf, FuzzStats* stats) {
 static void save_corpus(Buffer* buf, FuzzStats* stats, int run){
   char filename[512];
   snprintf(filename, sizeof(filename), 
-           "%s/corpus_%d_%ld", 
+           "%s/corpus_%d_%ld.txt", 
            CORPUS_DIR, total_new_cov(stats), time(NULL));
 
   FILE* f = fopen(filename, "w");
@@ -307,12 +264,7 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats) {
         if (labels && label_count > 0) {
             memcpy(vm.labels, labels, label_count * sizeof(Label));
         }
-        init_vm_virgin();
-        init_asm_virgin();
-
-        vm_coverage_reset();
-        asm_coverage_reset();
-        while (vm.running) {
+                while (vm.running) {
        
             if (vm.ip < 0 || vm.ip >= program_size) {
                 report_vm_error(ERR_PC_OUT_OF_BOUNDS, vm.ip, "index", 
@@ -369,7 +321,7 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats) {
       }
     }
 
-    if(new_vm || new_asm){
+    if(stats && (new_vm || new_asm)){
       int curr_run = stats->total_runs;
       if(new_vm){
         stats->vm_new_cov += vm_coverage_count_bits();
@@ -467,6 +419,7 @@ static void apply_mutations(Buffer* buf, int num_mutations) {
     }
 }
 
+
 // Print statistics
 static void print_stats(FuzzStats* stats) {
     double elapsed = (time_now_ms() - stats->start_time) / 1000.0;
@@ -536,12 +489,16 @@ static void save_stats(FuzzStats* stats) {
 
 int main(int argc, char** argv) {
     // Initialize
+    coverage_init_shared();
     init_rg();
     dir_create(CRASHES_DIR);
     dir_create(CORPUS_DIR);
     dir_create(COVERAGE_DIR);
     FuzzStats stats = {0};
     stats.start_time = time_now_ms();
+    init_vm_virgin();
+    init_asm_virgin();
+
     
     int max_iterations = MAX_ITERATIONS;
     if (argc > 1) {
@@ -556,22 +513,37 @@ int main(int argc, char** argv) {
     printf("\n");
     
     // Count seed programs
-    int num_seeds = 0;
-    while (seed_programs[num_seeds] != NULL) num_seeds++;
+    plant_seeds(CORPUS_DIR);
     
     // Main fuzzing loop
     for (int i = 0; i < max_iterations; i++) {
+        vm_coverage_reset();
+        asm_coverage_reset();
+
         // Select random seed
-        int seed_idx = rand_range(0, num_seeds - 1);
-        const char* seed = seed_programs[seed_idx];
+        int corpus_idx = rand_range(0, corps_count - 1);
+        const char* body = corpus[corpus_idx];
         
         // Create buffer from seed
-        Buffer* test_buf = buf_new(1024);
-        buf_append_str(test_buf, (char*)seed);
+        Buffer* test_buf = buf_new(2048);
+        FILE *f_corpus = fopen(body, "rb");
+        if(!f_corpus){
+          buf_free(test_buf);
+          continue;
+        }
+        fseek(f_corpus, 0, SEEK_END);
+        long f_cor_size = ftell(f_corpus);
+        rewind(f_corpus);
         
+        char* data = malloc(f_cor_size);
+        fread(data, 1, f_cor_size, f_corpus);
+        fclose(f_corpus);
+        
+        buf_append(test_buf, data, f_cor_size);
+        free(data);
         // Apply mutations
         /*int num_mutations = rand_range(1, 3);*/
-        apply_mutations(test_buf, 0);
+        apply_mutations(test_buf, 2);
         
         // Run test
         Errors result = run_single_test(test_buf, &stats);
@@ -579,18 +551,19 @@ int main(int argc, char** argv) {
         // Cleanup
         buf_free(test_buf);
         
+
         // Progress report every 100 runs
-        if ((i + 1) % 100 == 0) {
+         if ((i + 1) % 100 == 0) {
             printf("[%d/%d] Crashes: %d | Hangs: %d | ASM: %d | VM: %d | OK: %d\n",
                    i + 1, max_iterations,
                    stats.crashes, stats.hangs,
                    stats.asm_errors, stats.vm_errors,
                    stats.successful_runs);
-        }
+        } 
     }
     
     // Final report
-    print_stats(&stats);
+    print_stats(&stats); 
     save_stats(&stats);
     
     return 0;

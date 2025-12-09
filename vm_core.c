@@ -5,27 +5,6 @@
 #include "header.h"
 #include"error.h"
 
-
-void vm_coverage_reset(){
-    memset(vm_coverage_map, 0, VM_COVERAGE_MAP_SIZE);
-  __prev_vm_loc = 0;
-}
-
-void vm_coverage_write(const char* path){
-  FILE *f = fopen(path, "wb");
-  if(!f) return;
-  fwrite(vm_coverage_map, 1, VM_COVERAGE_MAP_SIZE, f);
-  fclose(f);
-}
-
-uint32_t vm_coverage_count_bits(){
-  uint32_t count = 0;
-  for(int i=0; i< VM_COVERAGE_MAP_SIZE; i++){
-    if(vm_coverage_map[i] > 0) count ++;
-  }
-  return count;
-}
-
 int assess_operand(VM* vm, Operand op){
   if(!vm){
     report_vm_error(ERR_IO, vm->ip, NULL, "input processing failed: VM-assessOperand");

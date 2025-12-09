@@ -8,28 +8,6 @@
 #define MAX_LINES 100 
 #define MAX_LINES_LENGTH 255
 
-void asm_coverage_reset(){
-    memset(asm_coverage_map, 0, ASM_COVERAGE_MAP_SIZE);
-  __prev_asm_loc = 0;
-}
-
-void asm_coverage_write(const char* path){
-  FILE *f = fopen(path, "wb");
-  if(!f) return;
-  fwrite(asm_coverage_map, 1, ASM_COVERAGE_MAP_SIZE, f);
-  fclose(f);
-}
-
-uint32_t asm_coverage_count_bits(){
-  uint32_t count = 0;
-  for(int i=0; i< ASM_COVERAGE_MAP_SIZE; i++){
-    if(asm_coverage_map[i] > 0) count ++;
-  }
-  return count;
-}
-
-
-
 Instr_template lookup[OPCODE]= {
   {PSH, 1, 1, instr_psh, { OP_IMM,  OP_NONE} },
   {ADD, 0, 0, instr_add, { OP_NONE,  OP_NONE} },
