@@ -1,5 +1,5 @@
-- Fix error with coverage not being implemented
-- so far the error system is chill i think? Look back at file handing in RL_fuzzer
-- Rename RL_fuzzer, thats a placeholder name
-- Study up on RL python model
+- Model pipe communication in simpler context
+- Implement piping with python program
+- Add an output for the float vector to enter pipe
+- Make RL model reward system
 

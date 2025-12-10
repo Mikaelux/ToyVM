@@ -45,7 +45,8 @@ typedef enum {
     // General I/O
     ERR_IO,           
 
-    ERR_UNKNOWN //catch-all error incase not defined
+    ERR_UNKNOWN, //catch-all error incase not defined
+    ERR_COUNT
 } Errors;
 
 void report_vm_error(Errors err, int pc, const char* instr, const char* detail)  __attribute__((noreturn));

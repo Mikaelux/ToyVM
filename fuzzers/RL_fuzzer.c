@@ -15,6 +15,7 @@
 #include "../coverage.h"
 #include "../header.h"
 #include "../error.h"
+#include "rl_bridge/state.h"
 #include "fuzzer_util.h"
 
 // Configuration
@@ -493,7 +494,8 @@ int main(int argc, char** argv) {
     stats.start_time = time_now_ms();
     init_vm_virgin();
     init_asm_virgin();
-
+    current_state = malloc(sizeof(State));
+    state_init(current_state);
     
     int max_iterations = MAX_ITERATIONS;
     if (argc > 1) {
@@ -514,6 +516,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < max_iterations; i++) {
         vm_coverage_reset();
         asm_coverage_reset();
+        state_reset(current_state);
         // select random seed
         int corpus_idx = rand_range(0, corps_count - 1);
         const char* body = corpus[corpus_idx];
@@ -541,7 +544,9 @@ int main(int argc, char** argv) {
         
         // run tests 
         Errors result = run_single_test(test_buf, &stats); 
+        state_update_run_stats(current_state, stats.vm_new_cov, stats.asm_new_cov, stats.crashes);
         (void)result;
+        
         // cleanup
         buf_free(test_buf);
         
@@ -554,6 +559,8 @@ int main(int argc, char** argv) {
                    stats.asm_errors, stats.vm_errors,
                    stats.successful_runs);
         } 
+
+      
     }
     
     // final conclusions, have to pipe these into python

@@ -1,6 +1,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include"error.h"
+#include"fuzzers/rl_bridge/state.h"
 
 void report_vm_error(Errors err, int pc, 
                      const char* instr, const char* detail){
@@ -14,7 +15,7 @@ fprintf(stderr,
         "}\n",
     err, pc, instr, detail
         );
-
+  state_update_vm_error(current_state, err);
   exit(err);
 }
 
@@ -31,7 +32,7 @@ void report_asm_error(Errors err, int pc,
         "}\n",
     err, pc, token, detail
         );
-
+  state_update_asm_error(current_state, err);
   exit(err);
 
 }

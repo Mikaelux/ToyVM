@@ -5,6 +5,7 @@
 #include<limits.h>
 #include"header.h"
 #include"error.h"
+#include"fuzzers/rl_bridge/state.h"
 #define MAX_LINES 100 
 #define MAX_LINES_LENGTH 255
 
@@ -463,8 +464,9 @@ void define_program(Instr **out_program, int *out_size, Label **out_labels, int 
     
     for(int i = 0; i < linecount; i++) {
         a_program[i] = Encoder(tokens[i]);
-    }
-    
+           }
+      state_update_histogram(current_state, a_program_size, a_program);
+      state_update_num_features(current_state, a_program_size, a_program); //separate both functions depending on what they fill up #separation_of_church_and_state
     int label_count = 0;
     Label *lb_array = parse_labels(a_program, a_program_size, &label_count, MAXLABELS);
     if(!lb_array){
