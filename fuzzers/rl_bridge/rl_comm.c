@@ -56,20 +56,21 @@ int rl_recv_action(int* action_buffer, size_t buffer_len) {
     if (rl_sock < 0 || !action_buffer || buffer_len == 0) return -1;
 
     size_t total_read = 0;
-    size_t bytes_to_read = buffer_len * sizeof(int);
+    size_t bytes_to_read = buffer_len;
 
     while (total_read < bytes_to_read) {
         ssize_t n = recv(rl_sock, ((char*)action_buffer) + total_read, bytes_to_read - total_read, 0);
         if (n < 0) {
+            if(errno == EINTR) continue;
             perror("recv");
             return -1;
         } else if (n == 0) {
             return 0;
         }
-        total_read += n;
+        total_read += (size_t)n;
     }
 
-    return total_read / sizeof(int);
+    return (int)(total_read / sizeof(int));
 }
 
 void rl_comm_close() {

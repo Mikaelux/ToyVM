@@ -8,7 +8,7 @@ int rl_comm_init(const char* path);
 
 int rl_send_state(const float* state, size_t vector_size);
 
-int rl_receive_action(int* action, size_t buffer_len);
+int rl_recv_action(int* action, size_t buffer_len);
 
 void rl_comm_close();
 #endif

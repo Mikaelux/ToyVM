@@ -12,7 +12,7 @@ uint8_t *asm_coverage_map;
 uint32_t __prev_vm_loc = 0;
 uint32_t __prev_asm_loc = 0;
 
-void coverage_init_shared(void) {
+void coverage_init_shared() {
     if (vm_coverage_map != NULL) return;  // Already initialized
     
     vm_coverage_map = mmap(NULL, VM_COVERAGE_MAP_SIZE,

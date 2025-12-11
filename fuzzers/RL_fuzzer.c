@@ -597,9 +597,7 @@ int main(int argc, char** argv) {
         // select random seed
         int corpus_idx = rand_range(0, corps_count - 1);
         const char* body = corpus[corpus_idx];
-        
-        // create use buffer from seed
-        Buffer* test_buf = buf_new(2048);
+             Buffer* test_buf = buf_new(2048);
         FILE *f_corpus = fopen(body, "rb");
         if(!f_corpus){
           buf_free(test_buf);
@@ -618,27 +616,36 @@ int main(int argc, char** argv) {
         // apply mutations
         int num_mutations = rand_range(1, 3); //used to be 5, but barely gave any success 
         apply_mutations(test_buf, num_mutations);
-        
-        // run tests 
+               // run tests 
+        int count = 3;
+        int *mut_instr = malloc(count*sizeof(int));
+
         Errors result = run_single_test(test_buf, &stats); 
         state_update_run_stats(current_state, stats.vm_new_cov, stats.asm_new_cov, stats.crashes);
+
         (void)result;
         float* send_vector = malloc(sizeof(float) * STATE_VECTOR_SIZE(current_state));
-
+        size_t size_byte = count * sizeof(int);
+        rl_recv_action(mut_instr, size_byte);
+        // create use buffer from seed
+        for(int i=0; i < count; i++){
+          printf("mut_instr[%d] = %d\n", i, mut_instr[i]);
+        }
         state_serialize(current_state, send_vector);
         rl_send_state(send_vector, STATE_VECTOR_SIZE(current_state));
+        free(send_vector);
         // cleanup
         buf_free(test_buf);
         
 
         // progress report every 100 runs
-         if ((i + 1) % 100 == 0) {
+         /*if ((i + 1) % 100 == 0) {
             printf("[%d/%d] Crashes: %d | Hangs: %d | ASM: %d | VM: %d | OK: %d\n",
                    i + 1, max_iterations,
                    stats.crashes, stats.hangs,
                    stats.asm_errors, stats.vm_errors,
                    stats.successful_runs);
-        }
+        }*/ 
 
       
     }
