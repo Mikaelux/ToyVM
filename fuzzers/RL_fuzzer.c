@@ -9,6 +9,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include<sys/mman.h>
 #include <signal.h>
 #include <errno.h>
 #include <dirent.h>
@@ -16,6 +17,7 @@
 #include "../header.h"
 #include "../error.h"
 #include "rl_bridge/state.h"
+#include "rl_bridge/rl_comm.h"
 #include "fuzzer_util.h"
 
 // Configuration
@@ -34,6 +36,33 @@
 
 char corpus[MAX_CORPUS][MAX_CORPUS_PATH];
 int corps_count = 0;
+
+void debug_print_state(State* s) {
+    printf("\n=== STATE ===\n");
+    
+    printf("numeric: ");
+    for(int i = 0; i < NUM_NUM_FEATURES; i++)
+        printf("%.1f ", s->numeric_features[i]);
+    printf("\n");
+    
+    printf("optype: ");
+    for(int i = 0; i < OPTYPE_COUNTERS; i++)
+        printf("%.0f ", s->optype_count[i]);
+    printf("\n");
+    
+    printf("vm_err: ");
+    for(int i = 0; i < ERR_COUNT; i++)
+        if(s->vm_error_onehot[i] > 0) printf("[%d] ", i);
+    printf("\n");
+    
+    printf("asm_err: ");
+    for(int i = 0; i < ERR_COUNT; i++)
+        if(s->asm_error_onehot[i] > 0) printf("[%d] ", i);
+    printf("\n");
+    
+    printf("cov: %.1f, crashes: %.0f\n", s->coverage_delta, s->crashes);
+    printf("=============\n");
+}
 
 typedef struct {
     int total_runs;
@@ -202,7 +231,45 @@ static void categorize_error(Errors err, FuzzStats* stats) {
             break;
     }
 }
+static bool is_asm_error(Errors err) {
+    switch(err) {
+        case ERR_SYNTAX:
+        case ERR_INVALID_TOKEN:
+        case ERR_TOO_FEW_OPERANDS:
+        case ERR_TOO_MANY_OPERANDS:
+        case ERR_LINE_TOO_LONG:
+        case ERR_TOKEN_TOO_LONG:
+        case ERR_INVALID_REGISTER:
+        case ERR_INVALID_LITERAL:
+        case ERR_OPERAND_OUT_OF_RANGE:
+        case ERR_TOO_MANY_LINES:
+        case ERR_DUPLICATE_LABEL:
+        case ERR_UNRESOLVED_LABEL:
+        case ERR_TOO_MANY_LABELS:
+        case ERR_LABEL_TOO_LONG:
+            return true;
+        default:
+            return false;
+    }
+}
 
+static bool is_vm_error(Errors err) {
+    switch(err) {
+        case ERR_CALLSTACK_OVERFLOW:
+        case ERR_CALLSTACK_UNDERFLOW:
+        case ERR_UNKNOWN_OPCODE:
+        case ERR_PC_OUT_OF_BOUNDS:
+        case ERR_STACK_OVERFLOW:
+        case ERR_STACK_UNDERFLOW:
+        case ERR_DIVIDE_BY_ZERO:
+        case ERR_REGISTER_OUT_OF_BOUNDS:
+        case ERR_MISSING_HALT:
+        case ERR_MAX_INSTRUCTIONS:
+            return true;
+        default:
+            return false;
+    }
+}
 //run test in isolated child process
 //this is to wrap errors for treatment so exit doesnt kill error data 
 static Errors run_single_test(Buffer* test_input, FuzzStats* stats) {
@@ -303,6 +370,13 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats) {
     // child proc exited
     if (WIFEXITED(status)) {
       int exit_code = WEXITSTATUS(status);
+        if(exit_code != ERR_OK && exit_code < ERR_COUNT){
+        if(is_asm_error(exit_code)){
+            state_update_asm_error(current_state, exit_code);
+        } else if(is_vm_error(exit_code)){
+            state_update_vm_error(current_state, exit_code);
+        }
+    }
           // coverage tracking
     bool new_vm = false;
     bool new_asm = false;
@@ -494,9 +568,12 @@ int main(int argc, char** argv) {
     stats.start_time = time_now_ms();
     init_vm_virgin();
     init_asm_virgin();
-    current_state = malloc(sizeof(State));
+    current_state = mmap(NULL, sizeof(State), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if(current_state == MAP_FAILED){
+    return 1;
+    }
     state_init(current_state);
-    
+    rl_comm_init("/home/shu/testing.sock");
     int max_iterations = MAX_ITERATIONS;
     if (argc > 1) {
         max_iterations = atoi(argv[1]);
@@ -546,7 +623,10 @@ int main(int argc, char** argv) {
         Errors result = run_single_test(test_buf, &stats); 
         state_update_run_stats(current_state, stats.vm_new_cov, stats.asm_new_cov, stats.crashes);
         (void)result;
-        
+        float* send_vector = malloc(sizeof(float) * STATE_VECTOR_SIZE(current_state));
+
+        state_serialize(current_state, send_vector);
+        rl_send_state(send_vector, STATE_VECTOR_SIZE(current_state));
         // cleanup
         buf_free(test_buf);
         
@@ -558,7 +638,7 @@ int main(int argc, char** argv) {
                    stats.crashes, stats.hangs,
                    stats.asm_errors, stats.vm_errors,
                    stats.successful_runs);
-        } 
+        }
 
       
     }
@@ -567,6 +647,7 @@ int main(int argc, char** argv) {
   // for a csv analysis or smn? To make plots for me based on data 
     print_stats(&stats); 
     save_stats(&stats);
-    
+    rl_comm_close();
+    munmap(current_state, sizeof(State));
     return 0;
 }

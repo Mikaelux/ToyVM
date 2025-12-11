@@ -1,7 +1,7 @@
 #include<string.h>
 #include "state.h"
 #include<float.h>
-
+#include"../../header.h"
 State* current_state = NULL;
 
 void state_init(State* s){
@@ -37,17 +37,21 @@ void state_update_num_features(State *s, int t_prog_size, Instr* t_prog){
       if(op2.type != NONE) sumofops+= 1.0;
       
       if(op1.type == IMM){
-        count+= 1.0;
-        sumofimm += op1.value.imm;
-        if(op1.value.imm < min) min = op1.value.imm;
-        if(op1.value.imm > max) max = op1.value.imm;
+        if(op1.value.imm >= -100000 && op1.value.imm <= 100000){
+          count+= 1.0;
+          sumofimm += op1.value.imm; 
+          if(op1.value.imm < min) min = op1.value.imm;
+          if(op1.value.imm > max) max = op1.value.imm;
+        }
       }
 
       if(op2.type == IMM){
-        count+=1.0;
-        sumofimm += op2.value.imm;
-        if(op2.value.imm < min) min = op2.value.imm;
-        if(op2.value.imm > max) max = op2.value.imm;
+        if(op1.value.imm >= -100000 && op1.value.imm <= 100000){
+          count+=1.0;
+          sumofimm += op2.value.imm;
+          if(op2.value.imm < min) min = op2.value.imm;
+          if(op2.value.imm > max) max = op2.value.imm;
+        }
       }
     
     if(t_prog[i].ID == LBL) lb_op_counter+=1.0;
@@ -82,13 +86,13 @@ void state_update_num_features(State *s, int t_prog_size, Instr* t_prog){
 
 void state_update_vm_error(State *s, Errors err){
   if(!s) return;
-  if(err < 0 || err > ERR_COUNT) return;
+  if(err < 0 || err >= ERR_COUNT) return;
   s->vm_error_onehot[err] = 1.0f;
 }
 
 void state_update_asm_error(State *s, Errors err){
   if(!s) return;
-  if(err < 0 || err > ERR_COUNT) return;
+  if(err < 0 || err >= ERR_COUNT) return;
   s->asm_error_onehot[err] = 1.0f;
 }
 
