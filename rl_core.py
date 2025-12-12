@@ -10,7 +10,8 @@ import torch.optim as optim
 # == socket setup ==
 SOCKET_PATH = os.path.expanduser("~/testing.sock")
 ACTION_DIM = 30
-STATE_DIM = 100
+STATE_DIM = 95
+NUM_ACTIONS = 3
 UPDATE_INTERVAL = 128
 HIDDEN_SIZE = 128
 
@@ -46,9 +47,10 @@ class CriticNetwork(nn.Module):
 #== ppo guy ==
 
 class PPOAgent:
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, state_dim, action_dim, num_actions = NUM_ACTIONS):
         self.state_dim = state_dim
         self.action_dim = action_dim
+        self.num_actions = num_actions
 
         self.actor = ActorNetwork(state_dim, action_dim)
         self.critic = CriticNetwork(state_dim)
@@ -68,25 +70,37 @@ class PPOAgent:
         self.values = []
         self.dones = []
 
-    def select_action(self, state):
+    def select_actions(self, state):
         state_tensor = torch.FloatTensor(state).unsqueeze(0)
 
         with torch.no_grad(): #no need to turnt s into grad, not training data
             probs = self.actor(state_tensor)
             value = self.critic(state_tensor)
 
+        if np.random.rand() < 0.2:
+            actions = [np.random.randint(0, self.action_dim) for _ in range(self.num_actions)]
+            dist = torch.distributions.Categorical(probs)
+            log_probs = [dist.log_prob(torch.tensor(a)).item() for a in actions]
+            return actions, log_probs, value.item()
+
         dist = torch.distributions.Categorical(probs) #this turns probs into "dice" based on vals, 
-        action = dist.sample() #pick from the dist 'Categorifcals' with pecentafe
-        log_prob = dist.log_prob(action) #log probability of the action
+        
+        actions = []
+        log_probs = []
 
-        return action.item(), log_prob.item(), value.item() #converts into usable nums 
+        for _ in range(self.num_actions):
+            action = dist.sample()
+            actions.append(action.item())
+            log_probs.append(dist.log_prob(action).item())
+
+        return actions, log_probs, value.item() #converts into usable nums 
 
 
-    def store_experience(self, state, action, reward, log_prob, value, done):
+    def store_experience(self, state, actions, reward, log_probs, value, done):
         self.states.append(state)
-        self.actions.append(action)
+        self.actions.append(actions)
         self.rewards.append(reward)
-        self.log_probs.append(log_prob)
+        self.log_probs.append(log_probs)
         self.values.append(value)
         self.dones.append(done)
 
@@ -110,37 +124,59 @@ class PPOAgent:
     def update(self):
         if len(self.states) < self.batch_size:
             return None, None
-        states = torch.FloatTensor(np.array(self.states))
-        actions = torch.LongTensor(self.actions)
-        old_log_probs = torch.FloatTensor(self.log_probs)
 
+        states = torch.FloatTensor(np.array(self.states))
         returns, advantages = self.compute_returns_and_advantages()
 
+        all_actions = []
+        all_old_log_probs = []
+        all_advantages = []
+        all_states= []
+
+        for i in range(len(self.states)):
+            for j in range(self.num_actions):
+                all_states.append(self.states[i])
+                all_actions.append(self.actions[i][j])
+                all_old_log_probs.append(self.log_probs[i][j])
+                all_advantages.append(advantages[i].item())
+
+        all_states = torch.FloatTensor(self.states[i])
+        all_actions = torch.LongTensor(all_actions)
+        all_old_log_probs = torch.FloatTensor(all_old_log_probs)
+        all_advantages = torch.FloatTensor(all_advantages)
+
         for _ in range(self.epochs):
-            probs = self.actor(states)
+            probs = self.actor(all_states)
             dist = torch.distributions.Categorical(probs)
-            new_log_probs = dist.log_prob(actions)
+            new_log_probs = dist.log_prob(all_actions)
             entropy = dist.entropy().mean()
 
-            values = self.critic(states).squeeze()
+            ratio = torch.exp(new_log_probs - all_old_log_probs)
+            surr1 = ratio * all_advantages
+            surr2 = torch.clamp(ratio, 1 - self.epsilon, 1+self.epsilon) * all_advantages
 
-            ratio = torch.exp(new_log_probs - old_log_probs)
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1 - self.epsilon, 1+self.epsilon) * advantages
+            actor_loss = -torch.min(surr1, surr2).mean() - 0.05 * entropy #turn program from maxxing F to negating -F, since optimizer step minimizes the loss and we want to max it
 
-            actor_loss = -torch.min(surr1, surr2).mean() #turn program from maxxing F to negating -F, since optimizer step minimizes the loss and we want to max it
-
-            critic_loss = nn.MSELoss()(values, returns) #prediction - target squared, MSE keeps everything positive so it doesnt cancel out neg n pos 
-
+            
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
             self.actor_optimizer.step()
+
+        for _ in range(self.epochs):
+            values = self.critic(states).squeeze()
+            critic_loss = nn.MSELoss()(values, returns)
+
+            self.critic_optimizer.zero_grad()
+            critic_loss.backward()
+            self.critic_optimizer.step()
+
         self.states.clear()
         self.actions.clear()
         self.rewards.clear()
         self.log_probs.clear()
         self.values.clear()
         self.dones.clear()
+
         return actor_loss.item(), critic_loss.item()
 
     def save(self, path="ppo_model"):
@@ -202,9 +238,9 @@ def receive_message(conn):
     else:
         return None, None
 
-def send_action(conn, action):
+def send_actions(conn, actions):
     # For now, send one int
-    data = struct.pack("i", action)
+    data = struct.pack("i" * len(actions), *actions)
     conn.sendall(data)
 
 
@@ -219,13 +255,13 @@ def normalize_state(state):
 
 
 
-agent = PPOAgent(STATE_DIM, AGENT_DIM)
+agent = PPOAgent(STATE_DIM, ACTION_DIM, NUM_ACTIONS)
 agent.load()
 
-last_state = NONE
-last_action = NONE
-last_log_prob = NONE
-last_value = NONE
+last_state = None
+last_action = None
+last_log_prob = None
+last_value = None
 
 step = 0
 episode_reward = 0
@@ -241,23 +277,23 @@ try:
         if msg_type == "state":
             current_state = normalize_state(data)
 
-            action, log_prob, value = agent.select_action(current_state)
-            send_action(conn, action)
+            actions, log_probs, value = agent.select_actions(current_state)
+            send_actions(conn, actions)
 
             last_state = current_state
-            last_action = action
-            last_log_prob = log_prob
+            last_actions = actions
+            last_log_probs = log_probs
             last_value = value
 
         elif msg_type == "reward":
             reward = data
             episode_reward += reward
 
-            if last_state is not None and last_action is not None:
+            if last_state is not None and last_actions is not None:
                 done = (step % UPDATE_INTERVAL == 0)
                 agent.store_experience(
-                    last_state, last_action, reward,
-                    last_log_prob, last_value, done
+                    last_state, last_actions, reward,
+                    last_log_probs, last_value, done
                 )
 
                 step += 1
@@ -271,12 +307,13 @@ try:
                             f"Critic Loss: {losses[1]:7.4f}")
                     total_rewards.append(episode_reward)
                     episode_reward = 0
+
                 if step % 1000 == 0:
                     avg = np.mean(total_rewards[-10:]) if total_rewards else 0
                     print(f"----- Step {step} | Avg reward (last 10): {avg:.2f} ----")
 
 except KeyboardInterrupt:
-    printf("\n\nInterrupted by user")
+    print("\n\nInterrupted by user")
 
 finally:
     print(f"\nTotal steps: {step}")

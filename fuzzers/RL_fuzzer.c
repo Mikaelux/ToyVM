@@ -558,22 +558,56 @@ static void save_stats(FuzzStats* stats) {
 }
 
 
-float compute_reward(FuzzStats *fuzz){
-   if (!fuzz) return 0.0f;
+float compute_reward(Errors result, FuzzStats *fuzz){
+  if (!fuzz) return 0.0f;
+  float reward = 0.0f;
 
-    const float w_vm_cov = 1.0f;
-    const float w_asm_cov = 0.5f;
-    const float w_crash = 10.0f;
-    const float w_hang = -5.0f;
-    const float w_success = 1.0f;
-    float reward = 0.0f;
+  const float w_vm_cov = 20.0f;
+  const float w_asm_cov = 10.0f;
+  const float w_crash = 70.0f;
+  const float w_hang = -10.0f;
+  
+  reward += fuzz->vm_new_cov * w_vm_cov;
+  reward += fuzz->asm_new_cov * w_asm_cov;
+  reward += fuzz->crashes * w_crash;
+  reward += fuzz->hangs * w_hang;
 
-    reward += fuzz->vm_new_cov * w_vm_cov;
-    reward += fuzz->asm_new_cov * w_asm_cov;
-    reward += fuzz->crashes * w_crash;
-    reward += fuzz->hangs * w_hang;
-    reward += fuzz->successful_runs * w_success;
-    return reward;
+  if(result == ERR_OK){
+    reward += 0.5f;
+  } else if(is_asm_error(result)){
+    reward -= 1.0f;
+  } else if(is_vm_error(result)){
+    reward += 1.0f;
+
+    switch(result) {
+      case ERR_DIVIDE_BY_ZERO:
+        reward += 1.2f;
+        break;
+      case ERR_STACK_OVERFLOW:
+        reward += 1.2f;
+        break;
+      case ERR_STACK_UNDERFLOW:
+        reward += 1.2f;
+        break;
+      case ERR_CALLSTACK_OVERFLOW:
+        reward +=1.2f;
+        break;
+      case ERR_CALLSTACK_UNDERFLOW:
+        reward += 1.8f;
+        break;
+      case ERR_PC_OUT_OF_BOUNDS:
+        reward += 2.0f;
+        break;
+      default:
+        break;
+    }
+  }
+  return reward;
+}
+
+void reload_corpus(){
+  corps_count = 0;
+  plant_seeds(CORPUS_DIR);
 }
 
 int main(int argc, char** argv) {
@@ -636,6 +670,11 @@ int main(int argc, char** argv) {
         long f_cor_size = ftell(f_corpus);
         rewind(f_corpus);
         
+        if( (i+1) % 1000 == 0){
+          reload_corpus();
+          printf("Reloaded corpus: %d files\n", corps_count);
+        }
+        
         char* data = malloc(f_cor_size);
         fread(data, 1, f_cor_size, f_corpus);
         fclose(f_corpus);
@@ -647,15 +686,19 @@ int main(int argc, char** argv) {
         state_serialize(current_state, send_vector);
         rl_send_state(send_vector, STATE_VECTOR_SIZE(current_state));
         free(send_vector);
-        
-        int action = 0;
-        if(rl_recv_action(&action, 1) < 0){
+
+
+        #define NUM_ACTIONS 3    
+        int actions[NUM_ACTIONS];
+        if(rl_recv_action(actions, NUM_ACTIONS) < 0){
           fprintf(stderr, "Failed to receive action\n");
           buf_free(test_buf);
           continue;
         }
-        
-        apply_mutations(test_buf, action);
+        for(int l=0; l<NUM_ACTIONS; l++){
+          apply_mutations(test_buf, actions[l]);
+        }
+
 
         Errors result = run_single_test(test_buf, &stats); 
         state_update_run_stats(current_state, stats.vm_new_cov, stats.asm_new_cov, stats.crashes);
@@ -674,7 +717,7 @@ int main(int argc, char** argv) {
           .hangs = delta_hangs,
           .successful_runs = delta_success
         };
-        reward = compute_reward(&prev_iteration);
+        reward = compute_reward(result, &prev_iteration);
         rl_send_reward(reward);
 
         prev_vm_cov  = stats.vm_new_cov;
