@@ -1,5 +1,5 @@
-- Model pipe communication in simpler context
-- Implement piping with python program
-- Add an output for the float vector to enter pipe
-- Make RL model reward system
+- Add csv functionalities to save statistics for research
+- future work : implement memory operations
 
+
+for now: im done 😊
