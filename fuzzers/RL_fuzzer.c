@@ -439,7 +439,7 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats) {
 }
 
 // Apply random mutations to buffer
-static void apply_mutations(Buffer* buf, int num_mutations) {
+static void apply_mutations(Buffer* buf, int action) {
     typedef bool (*MutationFunc)(Buffer*);
     //these typedef functions still feel like magic, i have to play with them more 
     MutationFunc mutations[] = {
@@ -484,10 +484,10 @@ static void apply_mutations(Buffer* buf, int num_mutations) {
     
     int num_mutators = sizeof(mutations) / sizeof(mutations[0]);
     
-    for (int i = 0; i < num_mutations; i++) {
-        int idx = rand_range(0, num_mutators - 1);
-        mutations[idx](buf);
-    }
+    if(action < 0) action = 0;
+    if(action >= num_mutators) action = num_mutators - 1;
+    
+    mutations[action](buf);
 }
 
 
@@ -557,6 +557,25 @@ static void save_stats(FuzzStats* stats) {
     fclose(f);
 }
 
+
+float compute_reward(FuzzStats *fuzz){
+   if (!fuzz) return 0.0f;
+
+    const float w_vm_cov = 1.0f;
+    const float w_asm_cov = 0.5f;
+    const float w_crash = 10.0f;
+    const float w_hang = -5.0f;
+    const float w_success = 1.0f;
+    float reward = 0.0f;
+
+    reward += fuzz->vm_new_cov * w_vm_cov;
+    reward += fuzz->asm_new_cov * w_asm_cov;
+    reward += fuzz->crashes * w_crash;
+    reward += fuzz->hangs * w_hang;
+    reward += fuzz->successful_runs * w_success;
+    return reward;
+}
+
 int main(int argc, char** argv) {
     // startup stuff 
     coverage_init_shared();
@@ -575,6 +594,13 @@ int main(int argc, char** argv) {
     state_init(current_state);
     rl_comm_init("/home/shu/testing.sock");
     int max_iterations = MAX_ITERATIONS;
+    
+    unsigned int prev_vm_cov = 0;
+    unsigned int prev_asm_cov = 0;
+    unsigned int prev_crashes = 0;
+    unsigned int prev_hangs = 0;
+    unsigned int prev_successful_runs = 0;
+
     if (argc > 1) {
         max_iterations = atoi(argv[1]);
     }
@@ -591,13 +617,16 @@ int main(int argc, char** argv) {
     
     // Main fuzzing loop
     for (int i = 0; i < max_iterations; i++) {
+        float reward = 0;
         vm_coverage_reset();
         asm_coverage_reset();
         state_reset(current_state);
+
         // select random seed
         int corpus_idx = rand_range(0, corps_count - 1);
         const char* body = corpus[corpus_idx];
-             Buffer* test_buf = buf_new(2048);
+
+        Buffer* test_buf = buf_new(2048);
         FILE *f_corpus = fopen(body, "rb");
         if(!f_corpus){
           buf_free(test_buf);
@@ -613,41 +642,58 @@ int main(int argc, char** argv) {
         
         buf_append(test_buf, data, f_cor_size);
         free(data);
-        // apply mutations
-        int num_mutations = rand_range(1, 3); //used to be 5, but barely gave any success 
-        apply_mutations(test_buf, num_mutations);
-               // run tests 
-        int count = 3;
-        int *mut_instr = malloc(count*sizeof(int));
-
-        Errors result = run_single_test(test_buf, &stats); 
-        state_update_run_stats(current_state, stats.vm_new_cov, stats.asm_new_cov, stats.crashes);
-
-        (void)result;
+        //mutation insert here RL 
         float* send_vector = malloc(sizeof(float) * STATE_VECTOR_SIZE(current_state));
-        size_t size_byte = count * sizeof(int);
-        rl_recv_action(mut_instr, size_byte);
-        // create use buffer from seed
-        for(int i=0; i < count; i++){
-          printf("mut_instr[%d] = %d\n", i, mut_instr[i]);
-        }
         state_serialize(current_state, send_vector);
         rl_send_state(send_vector, STATE_VECTOR_SIZE(current_state));
         free(send_vector);
+        
+        int action = 0;
+        if(rl_recv_action(&action, 1) < 0){
+          fprintf(stderr, "Failed to receive action\n");
+          buf_free(test_buf);
+          continue;
+        }
+        
+        apply_mutations(test_buf, action);
+
+        Errors result = run_single_test(test_buf, &stats); 
+        state_update_run_stats(current_state, stats.vm_new_cov, stats.asm_new_cov, stats.crashes);
+        (void)result; 
+       
+        unsigned int delta_vm = stats.vm_new_cov - prev_vm_cov;
+        unsigned int delta_asm = stats.asm_new_cov - prev_asm_cov;
+        unsigned int delta_crashes = stats.crashes - prev_crashes;
+        unsigned int delta_hangs = stats.hangs - prev_hangs;
+        unsigned int delta_success = stats.successful_runs - prev_successful_runs;
+
+        FuzzStats prev_iteration = {
+          .vm_new_cov = delta_vm,
+          .asm_new_cov = delta_asm,
+          .crashes = delta_crashes,
+          .hangs = delta_hangs,
+          .successful_runs = delta_success
+        };
+        reward = compute_reward(&prev_iteration);
+        rl_send_reward(reward);
+
+        prev_vm_cov  = stats.vm_new_cov;
+        prev_asm_cov = stats.asm_new_cov;
+        prev_crashes = stats.crashes;
+        prev_hangs   = stats.hangs;
+        prev_successful_runs = stats.successful_runs;
         // cleanup
         buf_free(test_buf);
         
 
         // progress report every 100 runs
-         /*if ((i + 1) % 100 == 0) {
+         if ((i + 1) % 100 == 0) {
             printf("[%d/%d] Crashes: %d | Hangs: %d | ASM: %d | VM: %d | OK: %d\n",
                    i + 1, max_iterations,
                    stats.crashes, stats.hangs,
                    stats.asm_errors, stats.vm_errors,
                    stats.successful_runs);
-        }*/ 
-
-      
+        }
     }
     
     // final conclusions, have to pipe these into python
