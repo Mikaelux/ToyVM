@@ -18,7 +18,7 @@
 #include "fuzzer_util.h"
 
 // Configuration
-#define MAX_ITERATIONS 100000
+#define MAX_ITERATIONS 50000
 #define TIMEOUT_SECONDS 5
 #define TEMP_INPUT_FILE "fuzz_input.txt"
 #define CRASHES_DIR "crashes"
@@ -27,7 +27,7 @@
 #define COVERAGE_DIR "coverage"
 #define VM_COVERAGE_FILE "coverage/vm_coverage.txt"
 #define ASM_COVERAGE_FILE "coverage/asm_coverage.txt"
-
+#define MUT_CSV_LOG_FILE "mut_fuzzer_log.csv"
 #define MAX_CORPUS 128
 #define MAX_CORPUS_PATH 512
 
@@ -72,6 +72,30 @@ int plant_seeds(const char* path){
   }
   closedir(d);
   return 0;
+}
+
+void init_csv_log(){
+  FILE* f = fopen(MUT_CSV_LOG_FILE, "w");
+  if(f){
+    fprintf(f, "interation,crashes,hangs,asm_errors,vm_errors,successful,vm_cov,asm_cov\n");
+    fclose(f);
+  }
+}
+
+void log_to_csv(int iteration, FuzzStats*stats){
+  FILE*f = fopen(MUT_CSV_LOG_FILE, "a");
+  if(f){
+    fprintf(f, "%d,%d,%d,%d,%d,%d,%u,%u\n",
+      iteration,
+      stats->crashes,
+      stats->hangs,
+      stats->asm_errors,
+      stats->vm_errors,
+      stats->successful_runs,
+      stats->vm_new_cov,
+      stats->asm_new_cov);
+      fclose(f);
+  }
 }
 
 uint8_t vm_virgin_map[VM_COVERAGE_MAP_SIZE];
@@ -493,7 +517,7 @@ int main(int argc, char** argv) {
     stats.start_time = time_now_ms();
     init_vm_virgin();
     init_asm_virgin();
-
+    init_csv_log();
     
     int max_iterations = MAX_ITERATIONS;
     if (argc > 1) {
@@ -548,6 +572,7 @@ int main(int argc, char** argv) {
 
         // progress report every 100 runs
          if ((i + 1) % 100 == 0) {
+            log_to_csv(i + 1, &stats);
             printf("[%d/%d] Crashes: %d | Hangs: %d | ASM: %d | VM: %d | OK: %d\n",
                    i + 1, max_iterations,
                    stats.crashes, stats.hangs,

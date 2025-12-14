@@ -6,6 +6,9 @@ import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import csv
+
+LOG_FILE = "ppo_training_log.csv"
 
 # == socket setup ==
 SOCKET_PATH = os.path.expanduser("~/testing.sock")
@@ -267,6 +270,19 @@ step = 0
 episode_reward = 0
 total_rewards = []
 
+def init_csv_log():
+    with open(LOG_FILE, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['step', 'reward', 'actor_loss', 'critic_loss', 'avg_reward_10'])
+
+def log_to_csv(step, reward, actor_loss, critic_loss, avg_reward):
+    with open(LOG_FILE, 'a', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow([step, f'{reward:.2f}', f'{actor_loss:.6f}', f'{critic_loss:.4f}', f'{avg_reward:.2f}'])
+
+
+init_csv_log()
+
 try:
     while True:
         msg_type, data = receive_message(conn)
@@ -301,15 +317,17 @@ try:
                 if step % UPDATE_INTERVAL == 0:
                     losses = agent.update()
                     if losses[0] is not None:
+                        avg = np.mean(total_rewards[-10:]) if total_rewards else 0
+                        log_to_csv(step, episode_reward, losses[0], losses[1], avg)
                         print(f"Step {step:6d} | "
                             f"Reward: {episode_reward:7.2f} | "
                             f"Actor Loss: {losses[0]:7.4f} | "
                             f"Critic Loss: {losses[1]:7.4f}")
+                        
                     total_rewards.append(episode_reward)
                     episode_reward = 0
-
+                    
                 if step % 1000 == 0:
-                    avg = np.mean(total_rewards[-10:]) if total_rewards else 0
                     print(f"----- Step {step} | Avg reward (last 10): {avg:.2f} ----")
 
 except KeyboardInterrupt:
