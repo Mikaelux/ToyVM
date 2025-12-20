@@ -320,7 +320,7 @@ Instr Encoder(char**validated_words){
       alpha_instr.operand2.value.reg = reg_from_char(op2);
     } else if(strlen(op2) > 1) {
       alpha_instr.operand2.type = LABEL;
-      alpha_instr.operand2.value.label = strdup(op2);  // Need to free this later!
+      alpha_instr.operand2.value.label = strdup(op2);
     }
   }
     

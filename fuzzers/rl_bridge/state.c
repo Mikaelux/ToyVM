@@ -46,7 +46,7 @@ void state_update_num_features(State *s, int t_prog_size, Instr* t_prog){
       }
 
       if(op2.type == IMM){
-        if(op1.value.imm >= -100000 && op1.value.imm <= 100000){
+        if(op2.value.imm >= -100000 && op2.value.imm <= 100000){
           count+=1.0;
           sumofimm += op2.value.imm;
           if(op2.value.imm < min) min = op2.value.imm;
@@ -104,7 +104,13 @@ void state_update_run_stats(State *s, uint32_t vm_cov, uint32_t asm_cov, int cra
 }
 
 void state_reset(State *s){
+  float sieben = s->numeric_features[7] * 0.9f;
+  float acht = s->numeric_features[8] * 0.9f;
+  float neun = s->numeric_features[9] * 0.9f;
   state_init(s);
+    s->numeric_features[7] = sieben;
+    s->numeric_features[8] = acht;
+    s->numeric_features[9] = neun;
 }
 
 void state_serialize(State* s, float* out_vector){

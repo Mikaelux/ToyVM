@@ -19,8 +19,6 @@ extern uint8_t *asm_coverage_map;
 extern uint32_t __prev_vm_loc;
 extern uint32_t __prev_asm_loc;
 
-void coverage_init_shared();
-
 static inline uint32_t hash_edge(uint32_t prev, uint32_t cur) {
     uint32_t x = cur ^ (prev >> 1);
     x ^= x >> 4;

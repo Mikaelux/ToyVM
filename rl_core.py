@@ -2,70 +2,132 @@ import socket
 import os
 import struct
 import numpy as np
-import random
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import logging
 import torch.optim as optim
-import csv
+from collections import deque
 
-LOG_FILE = "ppo_training_log.csv"
+# ================= CONFIG =================
 
-# == socket setup ==
 SOCKET_PATH = os.path.expanduser("~/testing.sock")
-ACTION_DIM = 30
-STATE_DIM = 95
-NUM_ACTIONS = 3
+
+STATE_DIM = 99
+NUM_MUTATIONS = 3
+TIER_DIM = 3
+MAX_MUTATIONS = 15
+
+HIDDEN_SIZE = 256
+
 UPDATE_INTERVAL = 128
-HIDDEN_SIZE = 128
+BATCH_SIZE = 64
+
+GAMMA = 0.99
+LAMBDA = 0.95
+CLIP_EPS = 0.2
+ENTROPY_COEF = 0.03
+VALUE_LOSS_COEF = 0.3
+MAX_GRAD_NORM = 0.5
+LR_ACTOR = 3e-4
+LR_CRITIC = 1e-3
+EPOCHS = 3
+
+REWARD_CLIP = 50.0
+LOG_INTERVAL = 100
+SAVE_INTERVAL = 1000
+MODEL_PATH = "ppo_model.pt"
+BEST_MODEL_PATH = "ppo_model_best.pt"
+
+MUTATION_COUNTS = [10, 5, 15]
+
+# ================= LOGGING =================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('rl_agent.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ================= NETWORKS =================
+
+def masked_logits(logits: torch.Tensor, valid: int) -> torch.Tensor:
+    """Mask invalid actions with large negative values"""
+    valid = min(valid, logits.shape[-1])
+    valid = max(valid, 1)
+
+    mask = torch.full_like(logits, -1e9)
+    mask[..., :valid] = 0
+    return logits + mask
+
 
 class ActorNetwork(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden = HIDDEN_SIZE):
+    def __init__(self, state_dim, hidden=HIDDEN_SIZE):
         super().__init__()
-        self.net = nn.Sequential(
+
+        self.encoder = nn.Sequential(
             nn.Linear(state_dim, hidden),
+            nn.LayerNorm(hidden),
             nn.ReLU(),
             nn.Linear(hidden, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, action_dim),
-            nn.Softmax(dim=-1)
+            nn.LayerNorm(hidden),
+            nn.ReLU()
         )
-    
+
+        self.tier_heads = nn.ModuleList(
+            [nn.Linear(hidden, TIER_DIM) for _ in range(NUM_MUTATIONS)]
+        )
+        
+        self.mut_heads = nn.ModuleList(
+            [nn.Linear(hidden, MAX_MUTATIONS) for _ in range(NUM_MUTATIONS)]
+        )
+
     def forward(self, state):
-        return self.net(state)
+        features = self.encoder(state)
+
+        tiers = [h(features) for h in self.tier_heads]
+        muts = [h(features) for h in self.mut_heads]
+
+        return tiers, muts
+
 
 class CriticNetwork(nn.Module):
     def __init__(self, state_dim, hidden=HIDDEN_SIZE):
         super().__init__()
+
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden),
+            nn.LayerNorm(hidden),
             nn.ReLU(),
             nn.Linear(hidden, hidden),
+            nn.LayerNorm(hidden),
             nn.ReLU(),
             nn.Linear(hidden, 1)
         )
 
     def forward(self, state):
-        return self.net(state)
+        return self.net(state).squeeze(-1)
 
-#== ppo guy ==
+
+# ================= PPO AGENT =================
 
 class PPOAgent:
-    def __init__(self, state_dim, action_dim, num_actions = NUM_ACTIONS):
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.num_actions = num_actions
+    def __init__(self, state_dim):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info(f"Using device: {self.device}")
 
-        self.actor = ActorNetwork(state_dim, action_dim)
-        self.critic = CriticNetwork(state_dim)
-        
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=3e-4)
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=1e-3)
+        self.actor = ActorNetwork(state_dim).to(self.device)
+        self.critic = CriticNetwork(state_dim).to(self.device)
 
-        self.gamma = 0.99
-        self.epsilon = 0.2
-        self.epochs = 10
-        self.batch_size = 64
+        self.actor_opt = optim.Adam(self.actor.parameters(), lr=LR_ACTOR)
+        self.critic_opt = optim.Adam(self.critic.parameters(), lr=LR_CRITIC)
 
+        self.reset_buffer()
+
+    def reset_buffer(self):
         self.states = []
         self.actions = []
         self.rewards = []
@@ -73,33 +135,39 @@ class PPOAgent:
         self.values = []
         self.dones = []
 
+    @torch.no_grad()
     def select_actions(self, state):
-        state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        """
+        Select actions for NUM_MUTATIONS mutation steps.
+        Returns: (actions, log_prob, value, entropy)
+        """
+        state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        tiers, muts = self.actor(state)
+        value = self.critic(state)
 
-        with torch.no_grad(): #no need to turnt s into grad, not training data
-            probs = self.actor(state_tensor)
-            value = self.critic(state_tensor)
-
-        if np.random.rand() < 0.2:
-            actions = [np.random.randint(0, self.action_dim) for _ in range(self.num_actions)]
-            dist = torch.distributions.Categorical(probs)
-            log_probs = [dist.log_prob(torch.tensor(a)).item() for a in actions]
-            return actions, log_probs, value.item()
-
-        dist = torch.distributions.Categorical(probs) #this turns probs into "dice" based on vals, 
-        
         actions = []
-        log_probs = []
+        log_probs_list = []
+        entropies_list = []
 
-        for _ in range(self.num_actions):
-            action = dist.sample()
-            actions.append(action.item())
-            log_probs.append(dist.log_prob(action).item())
+        for i in range(NUM_MUTATIONS):
+            tier_dist = torch.distributions.Categorical(logits=tiers[i])
+            tier = tier_dist.sample()
+            tier_item = tier.item()
 
-        return actions, log_probs, value.item() #converts into usable nums 
+            mut_logits_masked = masked_logits(muts[i], MUTATION_COUNTS[tier_item])
+            mut_dist = torch.distributions.Categorical(logits=mut_logits_masked)
+            mut = mut_dist.sample()
 
+            actions.extend([tier_item, mut.item()])
+            log_probs_list.append(tier_dist.log_prob(tier) + mut_dist.log_prob(mut))
+            entropies_list.append(tier_dist.entropy() + mut_dist.entropy())
 
-    def store_experience(self, state, actions, reward, log_probs, value, done):
+        log_prob_total = torch.stack(log_probs_list).sum().item()
+        entropy_total = torch.stack(entropies_list).mean().item()
+        
+        return actions, log_prob_total, value.item(), entropy_total
+
+    def store(self, state, actions, reward, log_probs, value, done):
         self.states.append(state)
         self.actions.append(actions)
         self.rewards.append(reward)
@@ -107,239 +175,267 @@ class PPOAgent:
         self.values.append(value)
         self.dones.append(done)
 
-    def compute_returns_and_advantages(self):
+    def compute_gae(self):
+        """Compute returns and advantages using GAE"""
         returns = []
-        G = 0
+        advantages = []
+        gae = 0.0
+        next_value = 0.0
 
         for i in reversed(range(len(self.rewards))):
             if self.dones[i]:
-                G = 0
-            G = self.rewards[i] + self.gamma * G
-            returns.insert(0, G)
+                gae = 0.0
+                next_value = 0.0
 
-        returns = torch.FloatTensor(returns)
-        values = torch.FloatTensor(self.values)
-        advantages = returns - values
+            delta = self.rewards[i] + GAMMA * next_value - self.values[i]
+            gae = delta + GAMMA * LAMBDA * gae
+
+            advantages.append(gae)
+            returns.append(gae + self.values[i])
+            next_value = self.values[i]
+
+        advantages = advantages[::-1]
+        returns = returns[::-1]
+
+        advantages = torch.tensor(advantages, dtype=torch.float32, device=self.device)
+        returns = torch.tensor(returns, dtype=torch.float32, device=self.device)
+
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
+        advantages = torch.clamp(advantages, -5.0, 5.0)
+        
         return returns, advantages
 
     def update(self):
-        if len(self.states) < self.batch_size:
+        """PPO update with proper tensor handling"""
+        if len(self.states) < BATCH_SIZE:
             return None, None
 
-        states = torch.FloatTensor(np.array(self.states))
-        returns, advantages = self.compute_returns_and_advantages()
+        states = torch.FloatTensor(np.array(self.states, dtype=np.float32)).to(self.device)
+        actions = torch.LongTensor(np.array(self.actions, dtype=np.int64)).to(self.device)
+        old_log_probs = torch.FloatTensor(np.array(self.log_probs, dtype=np.float32)).to(self.device)
 
-        all_actions = []
-        all_old_log_probs = []
-        all_advantages = []
-        all_states= []
+        returns, advantages = self.compute_gae()
+        
+        total_actor_loss = 0.0
+        total_critic_loss = 0.0
+        num_updates = 0
 
-        for i in range(len(self.states)):
-            for j in range(self.num_actions):
-                all_states.append(self.states[i])
-                all_actions.append(self.actions[i][j])
-                all_old_log_probs.append(self.log_probs[i][j])
-                all_advantages.append(advantages[i].item())
+        indices = np.arange(len(self.states))
 
-        all_states = torch.FloatTensor(self.states[i])
-        all_actions = torch.LongTensor(all_actions)
-        all_old_log_probs = torch.FloatTensor(all_old_log_probs)
-        all_advantages = torch.FloatTensor(all_advantages)
+        for epoch in range(EPOCHS):
+            np.random.shuffle(indices)
 
-        for _ in range(self.epochs):
-            probs = self.actor(all_states)
-            dist = torch.distributions.Categorical(probs)
-            new_log_probs = dist.log_prob(all_actions)
-            entropy = dist.entropy().mean()
+            for start in range(0, len(indices), BATCH_SIZE):
+                end = min(start + BATCH_SIZE, len(indices))
+                batch_indices = indices[start:end]
+                batch_size = len(batch_indices)
 
-            ratio = torch.exp(new_log_probs - all_old_log_probs)
-            surr1 = ratio * all_advantages
-            surr2 = torch.clamp(ratio, 1 - self.epsilon, 1+self.epsilon) * all_advantages
+                tiers, muts = self.actor(states[batch_indices])
+                values = self.critic(states[batch_indices])
 
-            actor_loss = -torch.min(surr1, surr2).mean() - 0.05 * entropy #turn program from maxxing F to negating -F, since optimizer step minimizes the loss and we want to max it
+                batch_log_probs = torch.zeros(batch_size, device=self.device, dtype=torch.float32)
+                batch_entropies = torch.zeros(batch_size, device=self.device, dtype=torch.float32)
 
-            
-            self.actor_optimizer.zero_grad()
-            actor_loss.backward()
-            self.actor_optimizer.step()
+                for mutation_idx in range(NUM_MUTATIONS):
+                    tier_logits = tiers[mutation_idx]
+                    tier_dist = torch.distributions.Categorical(logits=tier_logits)
+                    tier_actions = actions[batch_indices, 2 * mutation_idx]
+                    
+                    batch_log_probs += tier_dist.log_prob(tier_actions)
+                    batch_entropies += tier_dist.entropy()
 
-        for _ in range(self.epochs):
-            values = self.critic(states).squeeze()
-            critic_loss = nn.MSELoss()(values, returns)
+                    mut_logits = muts[mutation_idx]
+                    mut_actions = actions[batch_indices, 2 * mutation_idx + 1]
+                    
+                    masked_mut_logits = torch.zeros_like(mut_logits)
+                    for j in range(batch_size):
+                        tier_val = tier_actions[j].item()
+                        masked_mut_logits[j] = masked_logits(
+                            mut_logits[j:j+1], 
+                            MUTATION_COUNTS[tier_val]
+                        ).squeeze(0)
+                    
+                    mut_dist = torch.distributions.Categorical(logits=masked_mut_logits)
+                    batch_log_probs += mut_dist.log_prob(mut_actions)
+                    batch_entropies += mut_dist.entropy()
 
-            self.critic_optimizer.zero_grad()
-            critic_loss.backward()
-            self.critic_optimizer.step()
+                ratio = torch.exp(batch_log_probs - old_log_probs[batch_indices])
+                surr1 = ratio * advantages[batch_indices]
+                surr2 = torch.clamp(
+                    ratio,
+                    1.0 - CLIP_EPS,
+                    1.0 + CLIP_EPS
+                ) * advantages[batch_indices]
 
-        self.states.clear()
-        self.actions.clear()
-        self.rewards.clear()
-        self.log_probs.clear()
-        self.values.clear()
-        self.dones.clear()
+                actor_loss = -torch.min(surr1, surr2).mean()
+                actor_loss = actor_loss - ENTROPY_COEF * batch_entropies.mean()
 
-        return actor_loss.item(), critic_loss.item()
+                critic_loss = F.mse_loss(values, returns[batch_indices])
 
-    def save(self, path="ppo_model"):
-        torch.save({
-            'actor':self.actor.state_dict(),
-            'critic':self.critic.state_dict(),
-        }, f"{path}.pt")
-        print(f"Model saved to {path}.pt")
+                self.actor_opt.zero_grad()
+                actor_loss.backward()
+                nn.utils.clip_grad_norm_(self.actor.parameters(), MAX_GRAD_NORM)
+                self.actor_opt.step()
 
-    def load(self, path="ppo_model"):
-        if os.path.exists(f"{path}.pt"):
-            checkpoint = torch.load(f"{path}.pt")
-            self.actor.load_state_dict(checkpoint['actor'])
-            self.critic.load_state_dict(checkpoint['critic'])
-            print(f"Model loaded from {path}.pt")
+                self.critic_opt.zero_grad()
+                critic_loss.backward()
+                nn.utils.clip_grad_norm_(self.critic.parameters(), MAX_GRAD_NORM)
+                self.critic_opt.step()
+
+                total_actor_loss += actor_loss.item()
+                total_critic_loss += critic_loss.item()
+                num_updates += 1
+
+        self.reset_buffer()
+        
+        if num_updates > 0:
+            return total_actor_loss / num_updates, total_critic_loss / num_updates
+        return None, None
+
+    def save(self, path=MODEL_PATH):
+        torch.save(
+            {
+                "actor": self.actor.state_dict(),
+                "critic": self.critic.state_dict(),
+                "actor_opt": self.actor_opt.state_dict(),
+                "critic_opt": self.critic_opt.state_dict(),
+            }, path)
+        logger.info(f"✅ Saved model to {path}")
+
+    def load(self, path=MODEL_PATH):
+        if os.path.exists(path):
+            ckpt = torch.load(path, map_location=self.device)
+            self.actor.load_state_dict(ckpt["actor"])
+            self.critic.load_state_dict(ckpt["critic"])
+            self.actor_opt.load_state_dict(ckpt["actor_opt"])
+            self.critic_opt.load_state_dict(ckpt["critic_opt"])
+            logger.info(f"✅ Loaded PPO model from {path}")
             return True
         return False
 
 
-
-# ==== Socket setup =====
-#
-server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-server.bind(SOCKET_PATH)
-server.listen(1)
-print("Python server waiting for connection...")
-
-conn, _ = server.accept()
-print("Fuzzer connected.")
-
-
-# ----------------- Message Handling -----------------
-def receive_message(conn):
-    header = conn.recv(1)
-    if not header:
-        return None, None
-    msg_type = header[0]
-
-    if msg_type == 0:
-        size_raw = conn.recv(4)
-        if len(size_raw) < 4:
-            return None, None
-        (num_floats,) = struct.unpack("I", size_raw)
-        data = b''
-        while len(data) < num_floats * 4:
-            chunk = conn.recv(num_floats*4 - len(data))
-            if not chunk:
-                return None, None
-            data += chunk
-        state = np.array(struct.unpack("f"*num_floats, data))
-        return "state", state
-
-    elif msg_type == 1:
-        data = conn.recv(4)
-        if len(data) < 4:
-            return None, None
-        (reward,) = struct.unpack("f", data)
-        return "reward", reward
-    else:
-        return None, None
-
-def send_actions(conn, actions):
-    # For now, send one int
-    data = struct.pack("i" * len(actions), *actions)
-    conn.sendall(data)
-
-
+# ================= SOCKET =================
 
 def normalize_state(state):
-    state = np.clip(state, -1e6, 1e6)
-    max_val = np.abs(state).max()
-    if max_val > 1:
-        state = state / max_val
+    """Normalize state to prevent NaN/Inf issues"""
+    state = np.nan_to_num(
+        state,
+        nan=0.0,
+        posinf=1e3,
+        neginf=-1e3,
+    )
+    state = np.clip(state, -10.0, 10.0)
     return state
 
 
+if os.path.exists(SOCKET_PATH):
+    os.remove(SOCKET_PATH)
+
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(SOCKET_PATH)
+server.listen(1)
+logger.info("🐍 PPO server waiting for fuzzer...")
+
+conn, _ = server.accept()
+logger.info("✅ Fuzzer connected")
 
 
-agent = PPOAgent(STATE_DIM, ACTION_DIM, NUM_ACTIONS)
+def recv_msg():
+    """Receive message from fuzzer"""
+    header = conn.recv(1)
+    if not header:
+        return None, None
+
+    msg_type = header[0]
+
+    if msg_type == 0:
+        size = struct.unpack("I", conn.recv(4))[0]
+        data = struct.unpack(
+            "f" * size,
+            conn.recv(4 * size),
+        )
+        return "state", np.array(data, dtype=np.float32)
+
+    if msg_type == 1:
+        reward = struct.unpack("f", conn.recv(4))[0]
+        return "reward", reward
+
+    return None, None
+
+
+def send_actions(actions):
+    """Send actions to fuzzer"""
+    conn.sendall(struct.pack("i" * len(actions), *actions))
+
+
+# ================= MAIN LOOP =================
+
+agent = PPOAgent(STATE_DIM)
 agent.load()
 
-last_state = None
-last_action = None
-last_log_prob = None
-last_value = None
-
 step = 0
-episode_reward = 0
-total_rewards = []
-
-def init_csv_log():
-    with open(LOG_FILE, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['step', 'reward', 'actor_loss', 'critic_loss', 'avg_reward_10'])
-
-def log_to_csv(step, reward, actor_loss, critic_loss, avg_reward):
-    with open(LOG_FILE, 'a', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow([step, f'{reward:.2f}', f'{actor_loss:.6f}', f'{critic_loss:.4f}', f'{avg_reward:.2f}'])
-
-
-init_csv_log()
+episode_reward = 0.0
+reward_history = deque(maxlen=100)
+last = {}
 
 try:
     while True:
-        msg_type, data = receive_message(conn)
-
+        msg_type, data = recv_msg()
         if msg_type is None:
-            print("Client disconnected or invalid message")
             break
+
         if msg_type == "state":
-            current_state = normalize_state(data)
+            state = normalize_state(data)
+            actions, log_probs, value, entropy = agent.select_actions(state)
+            send_actions(actions)
 
-            actions, log_probs, value = agent.select_actions(current_state)
-            send_actions(conn, actions)
-
-            last_state = current_state
-            last_actions = actions
-            last_log_probs = log_probs
-            last_value = value
+            last = {
+                "state": state,
+                "actions": actions,
+                "log_probs": log_probs,
+                "value": value,
+            }
 
         elif msg_type == "reward":
             reward = data
             episode_reward += reward
 
-            if last_state is not None and last_actions is not None:
-                done = (step % UPDATE_INTERVAL == 0)
-                agent.store_experience(
-                    last_state, last_actions, reward,
-                    last_log_probs, last_value, done
-                )
+            done = ((step + 1) % UPDATE_INTERVAL) == 0
 
-                step += 1
+            agent.store(
+                last["state"],
+                last["actions"],
+                reward,
+                last["log_probs"],
+                last["value"],
+                done,
+            )
 
-                if step % UPDATE_INTERVAL == 0:
-                    losses = agent.update()
-                    if losses[0] is not None:
-                        avg = np.mean(total_rewards[-10:]) if total_rewards else 0
-                        log_to_csv(step, episode_reward, losses[0], losses[1], avg)
-                        print(f"Step {step:6d} | "
-                            f"Reward: {episode_reward:7.2f} | "
-                            f"Actor Loss: {losses[0]:7.4f} | "
-                            f"Critic Loss: {losses[1]:7.4f}")
-                        
-                    total_rewards.append(episode_reward)
-                    episode_reward = 0
-                    
-                if step % 1000 == 0:
-                    print(f"----- Step {step} | Avg reward (last 10): {avg:.2f} ----")
+            step += 1
+
+            if done:
+                actor_loss, critic_loss = agent.update()
+                reward_history.append(episode_reward)
+                avg_reward = sum(reward_history) / len(reward_history)
+
+                if actor_loss is not None:
+                    logger.info(
+                        f"[{step:6d}] "
+                        f"Reward={episode_reward:8.2f} "
+                        f"Avg={avg_reward:7.2f} "
+                        f"A_Loss={actor_loss:7.4f} "
+                        f"C_Loss={critic_loss:7.4f}"
+                    )
+
+                episode_reward = 0.0
 
 except KeyboardInterrupt:
-    print("\n\nInterrupted by user")
+    logger.info("\n⛔ Interrupted")
 
 finally:
-    print(f"\nTotal steps: {step}")
-    if total_rewards:
-        print(f"Average reward {np.mean(total_rewards):.2f}")
     agent.save()
     conn.close()
     server.close()
-
     if os.path.exists(SOCKET_PATH):
         os.remove(SOCKET_PATH)
+    logger.info("✅ Shutdown complete")

@@ -6,13 +6,13 @@
 #include "../../header.h"
 #include "../../error.h"
 
-#define NUM_NUM_FEATURES 6
+#define NUM_NUM_FEATURES 10
 #define OPTYPE_COUNTERS 5
 
 typedef struct State{
   //from assembler 
   float op_histogram[OPCODE]; //opcode historgram for instruction recc count 
-  float numeric_features[NUM_NUM_FEATURES]; //numeric features like operand mean, max and min, number of zeroes 
+  float numeric_features[NUM_NUM_FEATURES]; //numeric features like operand mean, max and min, number of zeroes and prorgam length 
   float optype_count[OPTYPE_COUNTERS]; //number of stack and arithmetic ops 
   //from fuzzer
   float vm_error_onehot[ERR_COUNT]; //errors for vm exec 
