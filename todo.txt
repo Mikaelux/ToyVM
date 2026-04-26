@@ -1,5 +1,0 @@
-- Add csv functionalities to save statistics for research
-- future work : implement memory operations
-
-
-for now: im done 😊

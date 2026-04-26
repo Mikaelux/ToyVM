@@ -10,8 +10,8 @@
 
 //Coverage-related
 
-#define VM_COVERAGE_MAP_SIZE 65536
-#define ASM_COVERAGE_MAP_SIZE 65536
+#define VM_COVERAGE_MAP_SIZE 262144
+#define ASM_COVERAGE_MAP_SIZE 262144
 
 extern uint8_t *vm_coverage_map;
 extern uint8_t *asm_coverage_map;

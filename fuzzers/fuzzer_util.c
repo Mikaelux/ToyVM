@@ -1020,7 +1020,7 @@ bool mut_invalid_jump(Buffer* buf){
 }
 
 bool mut_lonely_return(Buffer* buf){
-  char ret[] = "return\n";
+  char ret[] = "ret\n";
   return buf_insert(buf, 0, ret, strlen(ret));
 }
 

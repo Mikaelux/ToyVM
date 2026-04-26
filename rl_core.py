@@ -14,7 +14,7 @@ from collections import deque
 SOCKET_PATH = os.path.expanduser("~/testing.sock")
 
 STATE_DIM = 99
-NUM_MUTATIONS = 3
+NUM_MUTATIONS = 1
 TIER_DIM = 3
 MAX_MUTATIONS = 15
 

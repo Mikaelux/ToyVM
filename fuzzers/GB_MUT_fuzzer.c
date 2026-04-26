@@ -32,7 +32,7 @@
 #define MUT_CSV_LOG_FILE "mut_fuzzer_log.csv"
 #define MAX_CORPUS 512
 #define MAX_CORPUS_PATH 512
-#define NUM_MUTATION_PER_RUN 3
+#define NUM_MUTATION_PER_RUN 1
 
 // ================= DATA STRUCTURES =================
 
@@ -85,11 +85,12 @@ static void init_asm_virgin(void) {
     memset(asm_virgin_map, 0xFF, ASM_COVERAGE_MAP_SIZE);
 }
 
-static void record_vm_edge(uint32_t loc) {
+static void record_vm_edge(uint32_t loc, uint32_t opcode_id) {
+    uint32_t enriched = (opcode_id << 8) ^ loc; 
     uint32_t edge = hash_edge(shared_cov->prev_vm_loc, loc) % VM_COVERAGE_MAP_SIZE;
     uint8_t *slot = &shared_cov->vm_coverage[edge];
     if (*slot < 255) (*slot)++;
-    shared_cov->prev_vm_loc = loc >> 1;
+    shared_cov->prev_vm_loc = enriched >> 1;
 }
 
 static void record_asm_edge(uint32_t opcode, uint32_t line) {
@@ -97,7 +98,7 @@ static void record_asm_edge(uint32_t opcode, uint32_t line) {
     uint32_t edge = hash_edge(shared_cov->prev_asm_loc, loc) % ASM_COVERAGE_MAP_SIZE;
     uint8_t *slot = &shared_cov->asm_coverage[edge];
     if (*slot < 255) (*slot)++;
-    shared_cov->prev_asm_loc = loc >> 1;
+    shared_cov->prev_asm_loc = loc;
 }
 
 typedef struct {
@@ -346,7 +347,7 @@ static void promote_corpus_entry(int idx) {
     Corpus_entry *e = &corpus[idx];
     if (e->is_seed) return;
 
-    if (e->last_new_cov > 1 || e->successful >= 2) {
+    if (e->total_cov > 0 || e->successful >= 2 || e->vm_execs >= 3) {
         e->is_seed = true;
         printf("Promoted to seed: %s\n", e->path);
     }
@@ -365,12 +366,13 @@ static int pick_corpus_entry(int iteration) {
 
     for (int i = 0; i < corps_count; i++) {
         int age = iteration - (int)corpus[i].last_used;
-        double freshness = (age < 1000) ? 2.0 : 0.0;
-        double w = 1.0 
-                  + 5.0 * corpus[i].last_new_cov
-                  + 0.1 * corpus[i].total_cov
-                  + freshness
-                  + (corpus[i].is_seed ? 5.0 : 0.0);
+        double freshness = (age >= 1000) ? 2.0 : 0.0;
+        double w = 1.0
+                + 3.0 * corpus[i].vm_execs
+                + 6.0 * corpus[i].last_new_cov
+                + 0.15 * corpus[i].total_cov
+                + freshness
+                + (corpus[i].is_seed ? 2.0 : 0.0);
         weights[i] = w;
         sum += w;
     }
@@ -425,11 +427,6 @@ static MutationFunc tier_structural[] = {
 #define TIER_STRUCTURAL_COUNT ((int)(sizeof(tier_structural) / sizeof(tier_structural[0])))
 
 static MutationFunc tier_chaos[] = {
-    mut_flip_bit,
-    mut_flip_byte,
-    mut_insert_byte,
-    mut_delete_byte,
-    mut_duplicate_chunk,
     mut_stack_overflow,
     mut_stack_underflow,
     mut_divide_by_zero,
@@ -545,7 +542,7 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
             
             const Instr* instr = &vm.program[vm.ip];
             
-            record_vm_edge((uint32_t)vm.ip);
+            record_vm_edge((uint32_t)vm.ip, (uint32_t)instr->ID);
             record_asm_edge((uint32_t)instr->ID, (uint32_t)vm.ip);
             
             vm.ip++;

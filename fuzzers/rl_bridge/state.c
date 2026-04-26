@@ -104,9 +104,9 @@ void state_update_run_stats(State *s, uint32_t vm_cov, uint32_t asm_cov, int cra
 }
 
 void state_reset(State *s){
-  float sieben = s->numeric_features[7] * 0.9f;
-  float acht = s->numeric_features[8] * 0.9f;
-  float neun = s->numeric_features[9] * 0.9f;
+  float sieben = s->numeric_features[7] * 0.97f;
+  float acht = s->numeric_features[8] * 0.97f;
+  float neun = s->numeric_features[9] * 0.97f;
   state_init(s);
     s->numeric_features[7] = sieben;
     s->numeric_features[8] = acht;

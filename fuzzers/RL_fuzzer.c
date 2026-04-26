@@ -34,7 +34,7 @@
 #define RL_CSV_LOG_FILE "rl_fuzzer_log.csv"
 #define MAX_CORPUS 512
 #define MAX_CORPUS_PATH 512
-#define NUM_MUTATION_PER_RUN 3
+#define NUM_MUTATION_PER_RUN 1
 
 // ================= DATA STRUCTURES =================
 
@@ -83,11 +83,12 @@ static void init_asm_virgin(void) {
     memset(asm_virgin_map, 0xFF, ASM_COVERAGE_MAP_SIZE);
 }
 
-static void record_vm_edge(uint32_t loc) {
-    uint32_t edge = hash_edge(shared_cov->prev_vm_loc, loc) % VM_COVERAGE_MAP_SIZE;
+static void record_vm_edge(uint32_t loc, uint32_t opcode_id) {
+    uint32_t enriched = (opcode_id << 8) ^ loc;
+    uint32_t edge = hash_edge(shared_cov->prev_vm_loc, enriched) % VM_COVERAGE_MAP_SIZE;
     uint8_t *slot = &shared_cov->vm_coverage[edge];
     if (*slot < 255) (*slot)++;
-    shared_cov->prev_vm_loc = loc >> 1;
+    shared_cov->prev_vm_loc = enriched >> 1;
 }
 
 static void record_asm_edge(uint32_t opcode, uint32_t line) {
@@ -95,7 +96,7 @@ static void record_asm_edge(uint32_t opcode, uint32_t line) {
     uint32_t edge = hash_edge(shared_cov->prev_asm_loc, loc) % ASM_COVERAGE_MAP_SIZE;
     uint8_t *slot = &shared_cov->asm_coverage[edge];
     if (*slot < 255) (*slot)++;
-    shared_cov->prev_asm_loc = loc >> 1;
+    shared_cov->prev_asm_loc = loc;
 }
 
 typedef struct {
@@ -189,7 +190,26 @@ static bool is_vm_error(Errors err) {
             return false;
     }
 }
-
+static bool is_quality_input(Buffer* buf, CoverageResult* cov) {
+    if (cov->vm_new == 0 && cov->asm_new > 0) return false;
+    
+    int psh_count = 0;
+    int pop_count = 0;
+    int line_count = str_count_lines(buf);
+    
+    for (int i = 0; i < line_count; i++) {
+        size_t ls, ll;
+        if (!str_find_line(buf, i, &ls, &ll)) continue;
+        if (ll >= 3 && strncmp(buf->data + ls, "psh", 3) == 0) psh_count++;
+        if (ll >= 3 && strncmp(buf->data + ls, "pop", 3) == 0) pop_count++;
+    }
+    
+    if (pop_count > psh_count + 2) return false;
+    
+    if (line_count < 3) return false;
+    
+    return true;
+}
 static void categorize_error(Errors err, FuzzStats* stats) {
     switch(err) {
         case ERR_SYNTAX:
@@ -368,7 +388,8 @@ static void promote_corpus_entry(int idx) {
     Corpus_entry *e = &corpus[idx];
     if (e->is_seed) return;
 
-    if (e->last_new_cov > 1 || e->successful >= 2) {
+    if (e->last_new_cov > 1 ||
+        (e->total_cov > 0 && (e->successful >= 2 || e->vm_execs >= 3))) {
         e->is_seed = true;
         printf("🌱 Promoted to seed: %s\n", e->path);
     }
@@ -382,17 +403,25 @@ static void reload_corpus(void) {
 static int pick_corpus_entry(int iteration) {
     if (corps_count == 0) return -1;
 
+    if ((double)rand() / (double)RAND_MAX < 0.10) {
+        return rand() % corps_count;
+    }
+
     double weights[MAX_CORPUS];
     double sum = 0.0;
 
     for (int i = 0; i < corps_count; i++) {
         int age = iteration - (int)corpus[i].last_used;
-        double freshness = (age < 1000) ? 2.0 : 0.0;
-        double w = 1.0 
-                  + 5.0 * corpus[i].last_new_cov
-                  + 0.1 * corpus[i].total_cov
-                  + freshness
-                  + (corpus[i].is_seed ? 5.0 : 0.0);
+        double freshness = (age >= 1000) ? 2.0 : 0.0;
+        double novelty = log1p((double)corpus[i].last_new_cov);
+        double base = 1.0
+                + 3.0 * corpus[i].vm_execs
+                + 6.0 * novelty
+                + 0.15 * corpus[i].total_cov
+                + freshness
+                + (corpus[i].is_seed ? 2.0 : 0.0);
+        double success_penalty = 1.0 / (1.0 + 0.1 * corpus[i].successful);
+        double w = base * success_penalty;
         weights[i] = w;
         sum += w;
     }
@@ -447,11 +476,6 @@ static MutationFunc tier_structural[] = {
 #define TIER_STRUCTURAL_COUNT ((int)(sizeof(tier_structural) / sizeof(tier_structural[0])))
 
 static MutationFunc tier_chaos[] = {
-    mut_flip_bit,
-    mut_flip_byte,
-    mut_insert_byte,
-    mut_delete_byte,
-    mut_duplicate_chunk,
     mut_stack_overflow,
     mut_stack_underflow,
     mut_divide_by_zero,
@@ -565,7 +589,7 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
             
             const Instr* instr = &vm.program[vm.ip];
             
-            record_vm_edge((uint32_t)vm.ip);
+            record_vm_edge((uint32_t)vm.ip, (uint32_t)instr->ID);
             record_asm_edge((uint32_t)instr->ID, (uint32_t)vm.ip);
             
             vm.ip++;
@@ -619,17 +643,19 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
                 stats->asm_new_cov += cov_result->asm_new;
 
                 if (cov_result->vm_new > 0 || cov_result->asm_new > 0) {
-                    save_corpus(test_input, stats, stats->total_runs, 
-                               cov_result->vm_new, cov_result->asm_new);
+                    if(is_quality_input(test_input, cov_result))
+                        {
+                            save_corpus(test_input, stats, stats->total_runs, 
+                               cov_result->vm_new, cov_result->asm_new);}
                     
                     if (cov_result->vm_new > 0) {
                         save_coverage_map(VM_COVERAGE_FILE, 
-                                         shared_cov->vm_coverage, 
+                                         vm_virgin_map, 
                                          VM_COVERAGE_MAP_SIZE);
                     }
                     if (cov_result->asm_new > 0) {
                         save_coverage_map(ASM_COVERAGE_FILE, 
-                                         shared_cov->asm_coverage, 
+                                         asm_virgin_map, 
                                          ASM_COVERAGE_MAP_SIZE);
                     }
                 }
@@ -654,8 +680,9 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
                 save_crash(test_input, "Signal", sig, stats);
                 
                 if (cov_result->vm_new > 0 || cov_result->asm_new > 0) {
-                    save_corpus(test_input, stats, stats->total_runs,
-                               cov_result->vm_new, cov_result->asm_new);
+                    if(is_quality_input(test_input, cov_result))
+                   { save_corpus(test_input, stats, stats->total_runs,
+                               cov_result->vm_new, cov_result->asm_new);}
                 }
                 
                 return ERR_UNKNOWN;
@@ -684,36 +711,34 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
 
 static float compute_reward(Errors result, uint32_t vm_cov, uint32_t asm_cov, int prog_size) {
     float reward = 0.0f;
-    uint32_t cov = vm_cov + asm_cov;
-    
-    if (cov > 0) {
-        reward += 5.0f * logf(1.0f + (float)cov);
-    } else {
-        reward -= 0.5f;
+
+    if (vm_cov > 0) {
+        reward += 5.0f * logf(1.0f + (float)vm_cov);
+    }
+
+    if (result == ERR_OK && vm_cov > 0) {
+        reward += 0.6f;
+    }
+
+    if (result == ERR_OK && asm_cov > 0 && vm_cov == 0) {
+        reward += 0.25f * logf(1.0f + (float)asm_cov);
     }
 
     if (is_vm_error(result)) {
-        if (cov > 0) {
-            reward += 0.5f;
-        } else {
-            reward -= 0.3f;
+        float depth_bonus = 0.1f * fminf(1.0f, 
+                        (float)shared_cov->step_count / 10.0f);
+        reward += depth_bonus;
         }
-    }
 
     if (is_asm_error(result)) {
-        reward -= (prog_size < 20 ? 0.1f : 0.5f);
-    }
-
-    if (result == ERR_OK) {
-        reward += 0.5f;
+        reward -= (prog_size < 10 ? 1.2f : 0.6f);
     }
 
     if (result == ERR_TIMEOUT) {
-        reward -= 1.0f;
+        reward -= 2.0f;
     }
-    
-    reward += 0.001f * fminf(200.0f, (float)prog_size);
 
+    reward += 0.001f * fminf(200.0f, (float)prog_size);
     return reward;
 }
 
@@ -881,7 +906,16 @@ int main(int argc, char** argv) {
         
         buf_append(test_buf, data, (size_t)f_cor_size);
         free(data);
-
+        int psh_count = 0;
+        for (int line = 0; line < str_count_lines(test_buf); line++) {
+            size_t ls, ll;
+            if (!str_find_line(test_buf, line, &ls, &ll)) continue;
+            if (ll >= 3 && strncmp(test_buf->data + ls, "psh", 3) == 0) psh_count++;
+        }
+        if (psh_count < 3) {
+            char padding[] = "psh 1\npsh 2\npsh 3\n";
+            buf_insert(test_buf, 0, padding, strlen(padding));
+        }
         float* send_vector = malloc(sizeof(float) * STATE_VECTOR_SIZE(current_state));
         if (!send_vector) {
             buf_free(test_buf);
@@ -893,7 +927,8 @@ int main(int argc, char** argv) {
         free(send_vector);
 
         int actions[NUM_MUTATION_PER_RUN][2];
-        if (rl_recv_action((int*)actions, NUM_MUTATION_PER_RUN * 2) < 0) {
+        int action_count = rl_recv_action((int*)actions, NUM_MUTATION_PER_RUN * 2);
+        if (action_count <= 0) {
             fprintf(stderr, "Failed to receive action\n");
             buf_free(test_buf);
             continue;
@@ -940,24 +975,30 @@ int main(int argc, char** argv) {
                               (result == ERR_UNKNOWN) ? 1 : 0);
 
         if (tier_used[TIER_SAFE]) {
-            if (cov_result.vm_new > 0 || cov_result.asm_new > 0) {
-                current_state->numeric_features[7] += 1.0f;
+            if (cov_result.vm_new > 0 ) {
+                current_state->numeric_features[7] += 2.0f;
+            } else if (cov_result.asm_new > 0){
+                current_state->numeric_features[7] += 0.2f;
             } else {
-                current_state->numeric_features[7] -= 0.1f;
+                current_state->numeric_features[7] -= 0.2f;
             }
         }
 
         if (tier_used[TIER_STRUCTURAL]) {
-            if (is_vm_error(result)) {
-                current_state->numeric_features[8] += 1.0f;
+           if (cov_result.vm_new > 0 ) {
+                current_state->numeric_features[8] += 2.0f;
+            } else if (cov_result.asm_new > 0){
+                current_state->numeric_features[8] += 0.2f;
             } else {
                 current_state->numeric_features[8] -= 0.2f;
             }
         }
 
         if (tier_used[TIER_CHAOS]) {
-            if (cov_result.vm_new > 0 || cov_result.asm_new > 0) {
-                current_state->numeric_features[9] += 1.0f;
+            if (cov_result.vm_new > 0 ) {
+                current_state->numeric_features[9] += 2.0f;
+            } else if (cov_result.asm_new > 0){
+                current_state->numeric_features[9] += 0.2f;
             } else {
                 current_state->numeric_features[9] -= 0.2f;
             }
@@ -968,8 +1009,11 @@ int main(int argc, char** argv) {
         
         reward = compute_reward(result, cov_result.vm_new, cov_result.asm_new, 
                                (int)current_state->numeric_features[5]);
+        if (reward > 50.0f) reward = 50.0f;
+        if (reward < -50.0f) reward = -50.0f;
+        
         rl_send_reward(reward);
-
+        usleep(10000);
         buf_free(test_buf);
 
         if ((i + 1) % 100 == 0) {
