@@ -15,8 +15,22 @@ fprintf(stderr,
         "}\n",
     err, pc, instr, detail
         );
-  exit(err);
-}
+  switch(err) {
+        case ERR_STACK_OVERFLOW:
+        case ERR_STACK_UNDERFLOW:
+        case ERR_UNRESOLVED_LABEL:
+        case ERR_DIVIDE_BY_ZERO:
+        case ERR_CALLSTACK_OVERFLOW:
+        case ERR_CALLSTACK_UNDERFLOW:
+        case ERR_PC_OUT_OF_BOUNDS:
+        case ERR_MAX_INSTRUCTIONS:
+        case ERR_REGISTER_OUT_OF_BOUNDS:
+        case ERR_UNKNOWN_OPCODE:
+            exit(err);
+
+        default:
+            abort();
+    }}
 
 void report_asm_error(Errors err, int pc, 
                       const char* token, const char* detail){
@@ -32,6 +46,7 @@ void report_asm_error(Errors err, int pc,
     err, pc, token, detail
         );
   exit(err);
+
 
 }
 

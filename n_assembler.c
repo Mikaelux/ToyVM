@@ -55,7 +55,7 @@ void trim(char *str){
 int reg_from_char(char*st){
   if(!st || strlen(st)!= 1) return -1;
   char s = toupper((unsigned char)st[0]);
-  if(s < 'A' || s > (char)('A' + NUMOFREGS - 1)) return -1;
+  if(s < 'A' || s > (char)('Z')) return -1;
   return s -'A';
 }
 
@@ -86,12 +86,12 @@ int parse_operand(char*token){
   }
 
   if(isalpha((unsigned char)token[0])){
-    if(strlen(token) == 1 && strchr("ABCDE", token[0])){
+    if(strlen(token) == 1 && isalpha((unsigned char)token[0])){
     int reg = reg_from_char(token);
       if(reg >= 0){
         return OP_REG;
       }
-    } else if (strlen(token) > 1) {
+    } else {
         return OP_LABEL;
     }
   }
@@ -299,13 +299,13 @@ Instr Encoder(char**validated_words){
       if(assess_number(op1, &num_val)) {
         alpha_instr.operand1.type = IMM;
         alpha_instr.operand1.value.imm = num_val;
-      } else if(reg_from_char(op1) >= 0) {
-        alpha_instr.operand1.type = REG;
-        alpha_instr.operand1.value.reg = reg_from_char(op1);
       } else if(strlen(op1) > 1) {
         alpha_instr.operand1.type = LABEL;
         alpha_instr.operand1.value.label = strdup(op1);
-      }
+      }else {
+        alpha_instr.operand1.type = REG;
+        alpha_instr.operand1.value.reg = reg_from_char(op1);
+      } 
     }
 
   if(operand_count >= 2) {
@@ -315,13 +315,13 @@ Instr Encoder(char**validated_words){
     if(assess_number(op2, &num_val)) {
       alpha_instr.operand2.type = IMM;
       alpha_instr.operand2.value.imm = num_val;
-    } else if(reg_from_char(op2) >= 0) {
-      alpha_instr.operand2.type = REG;
-      alpha_instr.operand2.value.reg = reg_from_char(op2);
     } else if(strlen(op2) > 1) {
       alpha_instr.operand2.type = LABEL;
       alpha_instr.operand2.value.label = strdup(op2);
-    }
+    }else {
+      alpha_instr.operand2.type = REG;
+      alpha_instr.operand2.value.reg = reg_from_char(op2);
+    } 
   }
     
   return alpha_instr;
@@ -393,6 +393,31 @@ Label* parse_labels(Instr* program, int program_size, int*out_lb_count, int max_
   }
   if(!has_halt){
     report_asm_error(ERR_MISSING_HALT, 391, "halt", "Program missing a halt.");
+  }
+    for(int i = 0; i < program_size; i++){
+    bool needs_label = (program[i].ID == JMP ||
+                        program[i].ID == JE  ||
+                        program[i].ID == JNE ||
+                        program[i].ID == JG  ||
+                        program[i].ID == JGE ||
+                        program[i].ID == JL  ||
+                        program[i].ID == JLE ||
+                        program[i].ID == CALL);
+    if(!needs_label) continue;
+    
+    const char* target = program[i].operand1.value.label;
+    if(!target) continue;
+    
+    bool found = false;
+    for(int j = 0; j < lb_index; j++){
+      if(strcmp(temp_lb_array[j].name, target) == 0){
+        found = true;
+        break;
+      }
+    }
+    if(!found){
+      report_asm_error(ERR_UNRESOLVED_LABEL, i, target, "Jump target not defined in program");
+    }
   }
   *out_lb_count = lb_index;
   return temp_lb_array;

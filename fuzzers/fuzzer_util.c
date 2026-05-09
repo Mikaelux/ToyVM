@@ -566,7 +566,11 @@ bool find_next_reg(Buffer *buf, size_t from, size_t *reg_start){
   size_t i = from;
 
   while(i < buf->length){
-    if(buf->data[i] == '\n' || buf->data[i] == ';') return false;
+    if(buf->data[i] == '\n' || buf->data[i] == ';') {
+        while(i < buf->length && buf->data[i] != '\n') i++;
+        i++;
+        continue;
+    }
     bool is_start = false;
     bool is_one = false;
     char c = buf->data[i];

@@ -28,7 +28,7 @@
 #define CRASHES_DIR "crashes"
 #define CORPUS_DIR "corpus"
 #define STATS_FILE "fuzz_stats.txt"
-#define COVERAGE_DIR "coverage"
+#define COVERAGE_DIR "rl_coverage"
 #define VM_COVERAGE_FILE "coverage/vm_coverage.bin"
 #define ASM_COVERAGE_FILE "coverage/asm_coverage.bin"
 #define RL_CSV_LOG_FILE "rl_fuzzer_log.csv"
@@ -56,6 +56,13 @@ typedef enum {
     NUM_TIERS = 3
 } MutationTier;
 
+typedef enum{
+  DEEP,
+  SHALLOW,
+  HIGH_COV,
+  CRASH
+} SeedType;
+
 typedef struct {
     char path[MAX_CORPUS_PATH];
     uint32_t total_cov;
@@ -65,6 +72,8 @@ typedef struct {
     bool is_seed;
     uint32_t vm_execs;
     uint32_t successful;
+    uint32_t avg_steps;
+    SeedType category;
 } Corpus_entry;
 
 static Corpus_entry corpus[MAX_CORPUS];
@@ -104,6 +113,7 @@ typedef struct {
     uint32_t asm_new;
 } CoverageResult;
 
+static int tier_counts[NUM_TIERS] = {0};
 static CoverageResult process_coverage(void) {
     CoverageResult result = {0, 0};
     
@@ -141,7 +151,9 @@ typedef struct {
     int stack_underflows;
     int divide_by_zero;
     int infinite_loops;
-    int label_errors;
+    int missing_halt;
+    int rt_label_errors;
+    int asm_label_errors;
     int register_errors;
     uint64_t start_time;
     uint64_t total_exec_time_ms;
@@ -158,13 +170,13 @@ static bool is_asm_error(Errors err) {
         case ERR_TOO_FEW_OPERANDS:
         case ERR_TOO_MANY_OPERANDS:
         case ERR_LINE_TOO_LONG:
+        case ERR_MISSING_HALT:
         case ERR_TOKEN_TOO_LONG:
         case ERR_INVALID_REGISTER:
         case ERR_INVALID_LITERAL:
         case ERR_OPERAND_OUT_OF_RANGE:
         case ERR_TOO_MANY_LINES:
         case ERR_DUPLICATE_LABEL:
-        case ERR_UNRESOLVED_LABEL:
         case ERR_TOO_MANY_LABELS:
         case ERR_LABEL_TOO_LONG:
             return true;
@@ -175,6 +187,7 @@ static bool is_asm_error(Errors err) {
 
 static bool is_vm_error(Errors err) {
     switch(err) {
+        case ERR_UNRESOLVED_LABEL:
         case ERR_CALLSTACK_OVERFLOW:
         case ERR_CALLSTACK_UNDERFLOW:
         case ERR_UNKNOWN_OPCODE:
@@ -183,7 +196,6 @@ static bool is_vm_error(Errors err) {
         case ERR_STACK_UNDERFLOW:
         case ERR_DIVIDE_BY_ZERO:
         case ERR_REGISTER_OUT_OF_BOUNDS:
-        case ERR_MISSING_HALT:
         case ERR_MAX_INSTRUCTIONS:
             return true;
         default:
@@ -234,11 +246,14 @@ static void categorize_error(Errors err, FuzzStats* stats) {
             stats->vm_errors++;
             break;
         case ERR_DUPLICATE_LABEL:
-        case ERR_UNRESOLVED_LABEL:
         case ERR_TOO_MANY_LABELS:
         case ERR_LABEL_TOO_LONG:
-            stats->label_errors++;
+            stats->asm_label_errors++;
             stats->asm_errors++;
+            break;
+        case ERR_UNRESOLVED_LABEL:
+            stats->rt_label_errors++;
+            stats->vm_errors++;
             break;
         case ERR_INVALID_REGISTER:
         case ERR_REGISTER_OUT_OF_BOUNDS:
@@ -251,6 +266,10 @@ static void categorize_error(Errors err, FuzzStats* stats) {
             break;
         case ERR_EMPTY_PROGRAM:
             stats->empty_programs++;
+            break;
+        case ERR_MISSING_HALT:
+            stats->missing_halt++;
+            stats->asm_errors++;
             break;
         default:
             break;
@@ -330,8 +349,8 @@ static void init_csv_log(void) {
     if (f) {
         fprintf(f, 
                 "iteration,crashes,hangs,asm_errors,vm_errors,successful,reward,"
-                "vm_cov,asm_cov,"
-                "asm_cov_per_success,vm_cov_per_success\n");
+                "vm_cov,asm_cov,asm_cov_per_success,vm_cov_per_success,"
+                "tier_safe,tier_structural,tier_chaos\n");
         fclose(f);
     }
 }
@@ -345,7 +364,7 @@ static void log_to_csv(int iteration, FuzzStats* stats, float reward) {
         coverage_per_success(stats->vm_new_cov, stats->successful_runs);
 
     if (f) {
-        fprintf(f, "%d,%d,%d,%d,%d,%d,%.6f,%u,%u,%.6f,%.6f\n",
+        fprintf(f, "%d,%d,%d,%d,%d,%d,%.6f,%u,%u,%.6f,%.6f,%d,%d,%d\n",
                 iteration,
                 stats->crashes,
                 stats->hangs,
@@ -356,7 +375,10 @@ static void log_to_csv(int iteration, FuzzStats* stats, float reward) {
                 stats->vm_new_cov,
                 stats->asm_new_cov,
                 asm_per_success,
-                vm_per_success);
+                vm_per_success,
+                tier_counts[TIER_SAFE],
+                tier_counts[TIER_STRUCTURAL],
+                tier_counts[TIER_CHAOS]);
         fclose(f);
     }
 }
@@ -374,6 +396,8 @@ static int plant_seeds(const char* path) {
 
         Corpus_entry* e = &corpus[corps_count];
         memset(e, 0, sizeof(*e));
+        e->avg_steps = 0;
+        e->category = SHALLOW;
         snprintf(e->path, MAX_CORPUS_PATH, "%s/%s", path, entry->d_name);
         e->is_seed = (strncmp(entry->d_name, "seed", 4) == 0);
         corps_count++;
@@ -389,7 +413,7 @@ static void promote_corpus_entry(int idx) {
     if (e->is_seed) return;
 
     if (e->last_new_cov > 1 ||
-        (e->total_cov > 0 && (e->successful >= 2 || e->vm_execs >= 3))) {
+        (e->total_cov > 0 && (e->successful >= 2 || e->vm_execs >= 3)) ) {
         e->is_seed = true;
         printf("🌱 Promoted to seed: %s\n", e->path);
     }
@@ -406,22 +430,30 @@ static int pick_corpus_entry(int iteration) {
     if ((double)rand() / (double)RAND_MAX < 0.10) {
         return rand() % corps_count;
     }
-
+    double category_bonus = 0.0;
     double weights[MAX_CORPUS];
     double sum = 0.0;
 
     for (int i = 0; i < corps_count; i++) {
+        switch (corpus[i].category) {
+          case DEEP:     category_bonus = 2.0; break;
+          case HIGH_COV: category_bonus = 3.0; break;
+          case CRASH:    category_bonus = 1.0; break;
+          case SHALLOW:  category_bonus = -1.0; break;
+        }
         int age = iteration - (int)corpus[i].last_used;
-        double freshness = (age >= 1000) ? 2.0 : 0.0;
+        double freshness = log1p(age / 100.0);
         double novelty = log1p((double)corpus[i].last_new_cov);
         double base = 1.0
-                + 3.0 * corpus[i].vm_execs
+                + 1.0 / (1.0 + 0.05 * corpus[i].exec_count)
                 + 6.0 * novelty
                 + 0.15 * corpus[i].total_cov
+                + 3.0 * log1p(corpus[i].avg_steps)
                 + freshness
                 + (corpus[i].is_seed ? 2.0 : 0.0);
+
         double success_penalty = 1.0 / (1.0 + 0.1 * corpus[i].successful);
-        double w = base * success_penalty;
+        double w = base * success_penalty + category_bonus;
         weights[i] = w;
         sum += w;
     }
@@ -590,7 +622,6 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
             const Instr* instr = &vm.program[vm.ip];
             
             record_vm_edge((uint32_t)vm.ip, (uint32_t)instr->ID);
-            record_asm_edge((uint32_t)instr->ID, (uint32_t)vm.ip);
             
             vm.ip++;
             instr->execute(&vm, instr);
@@ -628,7 +659,6 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
         if (result > 0) {
             if (WIFEXITED(status)) {
                 int exit_code = WEXITSTATUS(status);
-
                 if (exit_code != ERR_OK && exit_code < ERR_COUNT) {
                     if (is_asm_error((Errors)exit_code)) {
                         state_update_asm_error(current_state, (Errors)exit_code);
@@ -708,40 +738,42 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
 }
 
 // ================= REWARD COMPUTATION =================
-
-static float compute_reward(Errors result, uint32_t vm_cov, uint32_t asm_cov, int prog_size) {
+static float compute_reward(Errors result, uint32_t vm_cov, uint32_t asm_cov, int prog_size, bool s_error) {
     float reward = 0.0f;
 
+    if (result == ERR_MAX_INSTRUCTIONS) {
+        reward -= 2.5f;
+    }
+    if (s_error) {
+        reward -= 0.2f;
+    }
     if (vm_cov > 0) {
         reward += 5.0f * logf(1.0f + (float)vm_cov);
     }
-
     if (result == ERR_OK && vm_cov > 0) {
-        reward += 0.6f;
+        float depth = fminf(1.0f, shared_cov->step_count / 200.0f);
+        reward += 0.5f + 0.5f * depth;
     }
-
     if (result == ERR_OK && asm_cov > 0 && vm_cov == 0) {
         reward += 0.25f * logf(1.0f + (float)asm_cov);
     }
-
-    if (is_vm_error(result)) {
-        float depth_bonus = 0.1f * fminf(1.0f, 
-                        (float)shared_cov->step_count / 10.0f);
+    if (is_vm_error(result) && result != ERR_MAX_INSTRUCTIONS) {
+        float depth_bonus = 0.3f * fminf(1.0f, (float)shared_cov->step_count / 500.0f);
         reward += depth_bonus;
-        }
-
-    if (is_asm_error(result)) {
-        reward -= (prog_size < 10 ? 1.2f : 0.6f);
     }
-
+    if (is_asm_error(result)) {
+        bool is_label = (result == ERR_DUPLICATE_LABEL ||
+                         result == ERR_UNRESOLVED_LABEL ||
+                         result == ERR_TOO_MANY_LABELS  ||
+                         result == ERR_LABEL_TOO_LONG);
+        reward -= is_label ? 4.5f : (prog_size < 10 ? 1.2f : 0.6f);
+    }
     if (result == ERR_TIMEOUT) {
         reward -= 2.0f;
     }
-
     reward += 0.001f * fminf(200.0f, (float)prog_size);
     return reward;
 }
-
 // ================= STATISTICS PRINTING =================
 
 static void print_stats(FuzzStats* stats) {
@@ -770,7 +802,7 @@ static void print_stats(FuzzStats* stats) {
            stats->asm_errors, 
            100.0 * stats->asm_errors / (stats->total_runs + 1));
     printf("  - Syntax:        %d\n", stats->syntax_errors);
-    printf("  - Labels:        %d\n", stats->label_errors);
+    printf("  - Labels (asm):        %d\n", stats->asm_label_errors);
     printf("\n");
     printf("VM errors:         %d (%.1f%%)\n", 
            stats->vm_errors, 
@@ -779,7 +811,15 @@ static void print_stats(FuzzStats* stats) {
     printf("  - Stack UF:      %d\n", stats->stack_underflows);
     printf("  - Div by zero:   %d\n", stats->divide_by_zero);
     printf("  - Inf loops:     %d\n", stats->infinite_loops);
-    printf("  - Registers:     %d\n", stats->register_errors);
+    printf("  - Registers:     %d\n", stats->register_errors); 
+    printf("  - Labels (rt):     %d\n", stats->rt_label_errors);
+    printf("  - Other:         %d\n", stats->vm_errors 
+                                  - stats->stack_overflows 
+                                  - stats->stack_underflows
+                                  - stats->divide_by_zero
+                                  - stats->infinite_loops
+                                  - stats->register_errors
+                                  - stats->rt_label_errors);
     printf("\n");
     printf("Empty programs:    %d\n", stats->empty_programs);
     printf("========================================\n");
@@ -903,8 +943,20 @@ int main(int argc, char** argv) {
             buf_free(test_buf);
             continue;
         }
-        
-        buf_append(test_buf, data, (size_t)f_cor_size);
+        data[bytes_read] = '\0';
+       Buffer* clean = buf_new((size_t)f_cor_size);
+        char* line = strtok(data, "\n");
+        while (line != NULL) {
+            char* trimmed = line;
+            while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+            if (trimmed[0] != ';' && trimmed[0] != '\0') {
+                buf_append_str(clean, trimmed);
+                buf_append_str(clean, "\n");
+            }
+            line = strtok(NULL, "\n");
+        }
+        buf_append(test_buf, clean->data, clean->length);
+        buf_free(clean);
         free(data);
         int psh_count = 0;
         for (int line = 0; line < str_count_lines(test_buf); line++) {
@@ -937,7 +989,7 @@ int main(int argc, char** argv) {
         int tier_used[NUM_TIERS] = {0, 0, 0};
         
         for (int l = 0; l < NUM_MUTATION_PER_RUN; l++) {
-            int tier = actions[l][0] % NUM_TIERS;
+            int tier = actions[l][0] % NUM_TIERS;;
             int mut = actions[l][1];
             
             switch (tier) {
@@ -954,16 +1006,44 @@ int main(int argc, char** argv) {
                     mut = 0;
                     break;
             }
-            
+            bool skip_mutation = (argc > 2 && strcmp(argv[2], "--no-mutate") == 0);
             tier_used[tier] = 1;
+      //debug for mutation (int overflow crash)
+            if(!skip_mutation){
             apply_mutation_tier(test_buf, tier, mut);
+            }
         }
-
+        for (int t = 0; t < NUM_TIERS; t++) {
+            if (tier_used[t]) tier_counts[t]++;
+        }
+        if ((i+1) % 1000 == 0) {
+           printf("Tier usage — Safe: %d | Structural: %d | Chaos: %d\n",
+           tier_counts[0], tier_counts[1], tier_counts[2]);
+        }
         CoverageResult cov_result;
         Errors result = run_single_test(test_buf, &stats, &cov_result);
-        
+        uint32_t steps = shared_cov->step_count;
+        bool shallow_error = (
+            (result ==ERR_STACK_UNDERFLOW || result == ERR_DIVIDE_BY_ZERO) && steps < 20
+          );
+
         Corpus_entry *e = &corpus[corpus_idx];
-        e->exec_count++;
+        if(e->exec_count == 0){
+          e->avg_steps = steps;
+        } else {
+          e->avg_steps = (e->avg_steps * e->exec_count + steps)/ (e->exec_count + 1);
+        }
+
+        if (result == ERR_UNKNOWN) {
+          e->category = CRASH;
+        } else if (cov_result.vm_new > 0) {
+          e->category = HIGH_COV;
+        } else if (steps > 200) {
+          e->category = DEEP;
+        } else {
+          e->category = SHALLOW;
+        } 
+
         if (!is_asm_error(result)) {
             e->vm_execs++;
         }
@@ -975,40 +1055,58 @@ int main(int argc, char** argv) {
                               (result == ERR_UNKNOWN) ? 1 : 0);
 
         if (tier_used[TIER_SAFE]) {
+            float delta = 0.0f;
             if (cov_result.vm_new > 0 ) {
-                current_state->numeric_features[7] += 2.0f;
+                delta = 2.0f;
             } else if (cov_result.asm_new > 0){
-                current_state->numeric_features[7] += 0.2f;
+                delta = 0.5f;
+            } else if (shallow_error){
+                delta = -1.0f;
             } else {
-                current_state->numeric_features[7] -= 0.2f;
+                delta = -0.5f;
             }
+
+          current_state->numeric_features[7] = fmaxf(-10.0f, fminf(10.0f, 
+                                                current_state->numeric_features[7] +delta));
         }
 
         if (tier_used[TIER_STRUCTURAL]) {
+            float delta = 0.0f;
            if (cov_result.vm_new > 0 ) {
-                current_state->numeric_features[8] += 2.0f;
+                delta = 2.0f;
             } else if (cov_result.asm_new > 0){
-                current_state->numeric_features[8] += 0.2f;
+                delta = 0.5f;
+            } else if (shallow_error){
+                delta = -1.0f;
             } else {
-                current_state->numeric_features[8] -= 0.2f;
+                delta = -0.5f;
             }
+            current_state->numeric_features[8] =  fmaxf(-10.0f, fminf(10.0f, 
+                                                current_state->numeric_features[8] +delta));
+
         }
 
         if (tier_used[TIER_CHAOS]) {
+            float delta = 0.0f;
             if (cov_result.vm_new > 0 ) {
-                current_state->numeric_features[9] += 2.0f;
+                delta = 2.0f;
             } else if (cov_result.asm_new > 0){
-                current_state->numeric_features[9] += 0.2f;
+                delta = 0.5f;
+            } else if (shallow_error){
+                delta = -1.0f;
             } else {
-                current_state->numeric_features[9] -= 0.2f;
+                delta = -0.5f;
             }
+
+            current_state->numeric_features[9] = fmaxf(-10.0f, fminf(10.0f, 
+                                                current_state->numeric_features[9] +delta));
+
         }
 
         update_corpus(corpus_idx, cov_result.vm_new, cov_result.asm_new, i);
         promote_corpus_entry(corpus_idx);
-        
         reward = compute_reward(result, cov_result.vm_new, cov_result.asm_new, 
-                               (int)current_state->numeric_features[5]);
+                               (int)current_state->numeric_features[5], shallow_error);
         if (reward > 50.0f) reward = 50.0f;
         if (reward < -50.0f) reward = -50.0f;
         
