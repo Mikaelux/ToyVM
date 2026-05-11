@@ -52,7 +52,8 @@ uint32_t pgc32() {
 }
 
 int rand_int(){
-    return (int)(pgc32());
+    return (int)(pgc32() & 0x7FFFFFFF); //mask on sign bit, been getting illegal instruction dump for rng, but cant change the functionality rn 
+  //Too many dependent functions and refactor wont be quick or easy
 }
 
 int rand_range(int min, int max){

@@ -31,10 +31,11 @@
 #define COVERAGE_DIR "coverage"
 #define VM_COVERAGE_FILE "coverage/vm_coverage.bin"
 #define ASM_COVERAGE_FILE "coverage/asm_coverage.bin"
-#define RL_CSV_LOG_FILE "rlcov_fuzzer_log.csv"
+#define RLCOV_CSV_LOG_FILE "rlcov_fuzzer_log.csv"
 #define MAX_CORPUS 512
 #define MAX_CORPUS_PATH 512
 #define NUM_MUTATION_PER_RUN 1
+#define COV_SIG_TABLE_SIZE 4096
 
 // ================= DATA STRUCTURES =================
 
@@ -65,6 +66,7 @@ typedef enum{
 
 typedef struct {
     char path[MAX_CORPUS_PATH];
+    uint64_t path_hash;
     uint32_t total_cov;
     uint32_t last_new_cov;
     uint32_t last_used;
@@ -132,6 +134,36 @@ static CoverageResult process_coverage(void) {
     
     return result;
 }
+// ========== COVERAGE DEDUP ============
+static uint32_t cov_sig_table[COV_SIG_TABLE_SIZE];
+static bool cov_sig_seen[COV_SIG_TABLE_SIZE];
+static uint32_t compute_cov_signature(void) {
+    uint32_t sig = 2166136261UL; 
+     for (size_t i = 0; i < VM_COVERAGE_MAP_SIZE; i++) {
+        if (shared_cov->vm_coverage[i] > 0) {
+            sig ^= (uint32_t)i;
+            sig *= 16777619UL;       
+      }
+   }
+    return sig;
+}
+
+static bool cov_sig_is_new(uint32_t sig){
+    uint32_t idx = sig % COV_SIG_TABLE_SIZE;
+    for (int i = 0;i < COV_SIG_TABLE_SIZE;i++) {
+        uint32_t slot = (idx + i) % COV_SIG_TABLE_SIZE;
+        if (!cov_sig_seen[slot]) {
+            cov_sig_table[slot] = sig;
+            cov_sig_seen[slot] = true;
+            return true;
+        }
+        if (cov_sig_table[slot] == sig) {
+            return false;
+        }
+    }
+    return true;
+}
+
 
 // ================= STATISTICS =================
 
@@ -141,19 +173,33 @@ typedef struct {
     int hangs;
     uint32_t vm_new_cov;
     uint32_t asm_new_cov;
+
     int asm_errors;
-    int vm_errors;
-    int successful_runs;
-    int empty_programs;
     int syntax_errors;
+    int asm_label_errors;
+    int missing_halt;
+    int invalid_literal;
+    int operand_out_of_range;
+    int too_many_lines;
+    int invalid_register_asm;
+    // vm errors
+    int vm_errors;
     int stack_overflows;
     int stack_underflows;
     int divide_by_zero;
     int infinite_loops;
-    int missing_halt;
-    int rt_label_errors;
-    int asm_label_errors;
     int register_errors;
+    int rt_label_errors;
+    int callstack_overflows;
+    int callstack_underflows;
+    int pc_out_of_bounds;
+    int unknown_opcode;
+    // other
+    int empty_programs;
+    int alloc_failures;
+    int io_errors;
+    int timeout_errors;
+    int successful_runs;
     uint64_t start_time;
     uint64_t total_exec_time_ms;
 } FuzzStats;
@@ -221,8 +267,10 @@ static bool is_quality_input(Buffer* buf, CoverageResult* cov) {
     
     return true;
 }
+
 static void categorize_error(Errors err, FuzzStats* stats) {
     switch(err) {
+        // ===== ASM ERRORS =====
         case ERR_SYNTAX:
         case ERR_INVALID_TOKEN:
         case ERR_TOO_FEW_OPERANDS:
@@ -232,45 +280,112 @@ static void categorize_error(Errors err, FuzzStats* stats) {
             stats->syntax_errors++;
             stats->asm_errors++;
             break;
-        case ERR_STACK_OVERFLOW:
-            stats->stack_overflows++;
-            stats->vm_errors++;
+
+        case ERR_INVALID_REGISTER:
+            stats->invalid_register_asm++;
+            stats->asm_errors++;
             break;
-        case ERR_STACK_UNDERFLOW:
-            stats->stack_underflows++;
-            stats->vm_errors++;
+
+        case ERR_INVALID_LITERAL:
+            stats->invalid_literal++;
+            stats->asm_errors++;
             break;
-        case ERR_DIVIDE_BY_ZERO:
-            stats->divide_by_zero++;
-            stats->vm_errors++;
+
+        case ERR_OPERAND_OUT_OF_RANGE:
+            stats->operand_out_of_range++;
+            stats->asm_errors++;
             break;
+
+        case ERR_TOO_MANY_LINES:
+            stats->too_many_lines++;
+            stats->asm_errors++;
+            break;
+
         case ERR_DUPLICATE_LABEL:
         case ERR_TOO_MANY_LABELS:
         case ERR_LABEL_TOO_LONG:
             stats->asm_label_errors++;
             stats->asm_errors++;
             break;
-        case ERR_UNRESOLVED_LABEL:
-            stats->rt_label_errors++;
-            stats->vm_errors++;
-            break;
-        case ERR_INVALID_REGISTER:
-        case ERR_REGISTER_OUT_OF_BOUNDS:
-            stats->register_errors++;
-            stats->vm_errors++;
-           printf("DEBUG register error: %d\n", err);
-            break;
-        case ERR_MAX_INSTRUCTIONS:
-            stats->infinite_loops++;
-            stats->vm_errors++;
-            break;
-        case ERR_EMPTY_PROGRAM:
-            stats->empty_programs++;
-            break;
+
         case ERR_MISSING_HALT:
             stats->missing_halt++;
             stats->asm_errors++;
             break;
+
+        // ===== VM ERRORS =====
+        case ERR_STACK_OVERFLOW:
+            stats->stack_overflows++;
+            stats->vm_errors++;
+            break;
+
+        case ERR_STACK_UNDERFLOW:
+            stats->stack_underflows++;
+            stats->vm_errors++;
+            break;
+
+        case ERR_DIVIDE_BY_ZERO:
+            stats->divide_by_zero++;
+            stats->vm_errors++;
+            break;
+
+        case ERR_REGISTER_OUT_OF_BOUNDS:
+            stats->register_errors++;
+            stats->vm_errors++;
+            break;
+
+        case ERR_MAX_INSTRUCTIONS:
+            stats->infinite_loops++;
+            stats->vm_errors++;
+            break;
+
+        case ERR_UNRESOLVED_LABEL:
+            stats->rt_label_errors++;
+            stats->vm_errors++;
+            break;
+
+        case ERR_CALLSTACK_OVERFLOW:
+            stats->callstack_overflows++;
+            stats->vm_errors++;
+            break;
+
+        case ERR_CALLSTACK_UNDERFLOW:
+            stats->callstack_underflows++;
+            stats->vm_errors++;
+            break;
+
+        case ERR_PC_OUT_OF_BOUNDS:
+            stats->pc_out_of_bounds++;
+            stats->vm_errors++;
+            break;
+
+        case ERR_UNKNOWN_OPCODE:
+            stats->unknown_opcode++;
+            stats->vm_errors++;
+            break;
+
+        // ===== OTHER =====
+        case ERR_EMPTY_PROGRAM:
+            stats->empty_programs++;
+            break;
+
+        case ERR_ALLOC_FAIL:
+            stats->alloc_failures++;
+            break;
+
+        case ERR_IO:
+            stats->io_errors++;
+            break;
+
+        case ERR_TIMEOUT:
+            stats->timeout_errors++;
+            break;
+
+        case ERR_OK:
+        case ERR_UNKNOWN:
+        case ERR_COUNT:
+            break;
+
         default:
             break;
     }
@@ -379,13 +494,19 @@ static void log_to_csv(int iteration, FuzzStats* stats, float reward) {
                 tier_counts[TIER_SAFE],
                 tier_counts[TIER_STRUCTURAL],
                 tier_counts[TIER_CHAOS]);
-);
         fclose(f);
     }
 }
 
 // ================= CORPUS MANAGEMENT =================
-
+static uint64_t hash_path(const char* path) {
+    uint64_t h = 1469598103934665603ULL;
+    while (*path) {
+        h ^= (uint8_t)*path++;
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
 static int plant_seeds(const char* path) {
     DIR* d = opendir(path);
     if (!d) return -1;
@@ -394,11 +515,25 @@ static int plant_seeds(const char* path) {
     while ((entry = readdir(d)) != NULL) {
         if (entry->d_type != DT_REG) continue;
         if (corps_count >= MAX_CORPUS) break;
+      
+        char full_path[MAX_CORPUS_PATH];
+        snprintf(full_path, MAX_CORPUS_PATH, "%s/%s", path, entry->d_name);
+        uint64_t code_hash = hash_path(full_path);
+      
+        bool exists = false;
+        for(int i=0; i<corps_count; i++){
+          if (corpus[i].path_hash == code_hash) {
+                exists = true;
+                break;
+          }
+        }
+        if(exists) continue;
 
         Corpus_entry* e = &corpus[corps_count];
         memset(e, 0, sizeof(*e));
         e->avg_steps = 0;
         e->category = SHALLOW;
+        e->path_hash=code_hash;
         snprintf(e->path, MAX_CORPUS_PATH, "%s/%s", path, entry->d_name);
         e->is_seed = (strncmp(entry->d_name, "seed", 4) == 0);
         corps_count++;
@@ -421,7 +556,6 @@ static void promote_corpus_entry(int idx) {
 }
 
 static void reload_corpus(void) {
-    corps_count = 0;
     plant_seeds(CORPUS_DIR);
 }
 
@@ -623,7 +757,7 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
             const Instr* instr = &vm.program[vm.ip];
             
             record_vm_edge((uint32_t)vm.ip, (uint32_t)instr->ID);
-            
+            record_asm_edge((uint32_t)instr->ID, (uint32_t)vm.ip); 
             vm.ip++;
             instr->execute(&vm, instr);
 
@@ -674,7 +808,8 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
                 stats->asm_new_cov += cov_result->asm_new;
 
                 if (cov_result->vm_new > 0 || cov_result->asm_new > 0) {
-                    if(is_quality_input(test_input, cov_result))
+                    uint32_t sig_cov = compute_cov_signature();
+                    if(is_quality_input(test_input, cov_result) && cov_sig_is_new(sig_cov))
                         {
                             save_corpus(test_input, stats, stats->total_runs, 
                                cov_result->vm_new, cov_result->asm_new);}
@@ -711,7 +846,8 @@ static Errors run_single_test(Buffer* test_input, FuzzStats* stats, CoverageResu
                 save_crash(test_input, "Signal", sig, stats);
                 
                 if (cov_result->vm_new > 0 || cov_result->asm_new > 0) {
-                    if(is_quality_input(test_input, cov_result))
+                    uint32_t sig_cov = compute_cov_signature();
+                    if(is_quality_input(test_input, cov_result) && cov_sig_is_new(sig_cov))
                    { save_corpus(test_input, stats, stats->total_runs,
                                cov_result->vm_new, cov_result->asm_new);}
                 }
@@ -754,7 +890,6 @@ static float compute_reward(uint32_t vm_cov, uint32_t asm_cov) {
     return reward;
 }
 // ================= STATISTICS PRINTING =================
-
 static void print_stats(FuzzStats* stats) {
     double elapsed = (double)(time_now_ms() - stats->start_time) / 1000.0;
     double execs_per_sec = elapsed > 0 ? stats->total_runs / elapsed : 0;
@@ -764,43 +899,55 @@ static void print_stats(FuzzStats* stats) {
     printf("Time elapsed:      %.2f seconds\n", elapsed);
     printf("Execs/sec:         %.2f\n", execs_per_sec);
     printf("\n");
-    printf("Successful:        %d (%.1f%%)\n", 
-           stats->successful_runs, 
+    printf("Successful:        %d (%.1f%%)\n",
+           stats->successful_runs,
            100.0 * stats->successful_runs / (stats->total_runs + 1));
-    printf("Crashes:           %d (%.1f%%)\n", 
-           stats->crashes, 
+    printf("Crashes:           %d (%.1f%%)\n",
+           stats->crashes,
            100.0 * stats->crashes / (stats->total_runs + 1));
-    printf("Hangs:             %d (%.1f%%)\n", 
-           stats->hangs, 
+    printf("Hangs:             %d (%.1f%%)\n",
+           stats->hangs,
            100.0 * stats->hangs / (stats->total_runs + 1));
     printf("\n");
     printf("VM Edge Coverage:  %u\n", stats->vm_new_cov);
     printf("ASM Edge Coverage: %u\n", stats->asm_new_cov);
     printf("\n");
-    printf("Assembler errors:  %d (%.1f%%)\n", 
-           stats->asm_errors, 
+    printf("Assembler errors:  %d (%.1f%%)\n",
+           stats->asm_errors,
            100.0 * stats->asm_errors / (stats->total_runs + 1));
     printf("  - Syntax:        %d\n", stats->syntax_errors);
-    printf("  - Labels (asm):        %d\n", stats->asm_label_errors);
+    printf("  - Labels (asm):  %d\n", stats->asm_label_errors);
+    printf("  - Missing halt:  %d\n", stats->missing_halt);
+    printf("  - Inv register:  %d\n", stats->invalid_register_asm);
+    printf("  - Inv literal:   %d\n", stats->invalid_literal);
+    printf("  - OOB operand:   %d\n", stats->operand_out_of_range);
+    printf("  - Too many lines:%d\n", stats->too_many_lines);
     printf("\n");
-    printf("VM errors:         %d (%.1f%%)\n", 
-           stats->vm_errors, 
+    printf("VM errors:         %d (%.1f%%)\n",
+           stats->vm_errors,
            100.0 * stats->vm_errors / (stats->total_runs + 1));
     printf("  - Stack OF:      %d\n", stats->stack_overflows);
     printf("  - Stack UF:      %d\n", stats->stack_underflows);
     printf("  - Div by zero:   %d\n", stats->divide_by_zero);
     printf("  - Inf loops:     %d\n", stats->infinite_loops);
-    printf("  - Registers:     %d\n", stats->register_errors); 
-    printf("  - Labels (rt):     %d\n", stats->rt_label_errors);
-    printf("  - Other:         %d\n", stats->vm_errors 
-                                  - stats->stack_overflows 
-                                  - stats->stack_underflows
-                                  - stats->divide_by_zero
-                                  - stats->infinite_loops
-                                  - stats->register_errors
-                                  - stats->rt_label_errors);
+    printf("  - Registers:     %d\n", stats->register_errors);
+    printf("  - Labels (rt):   %d\n", stats->rt_label_errors);
+    printf("  - Callstack OF:  %d\n", stats->callstack_overflows);
+    printf("  - Callstack UF:  %d\n", stats->callstack_underflows);
+    printf("  - PC OOB:        %d\n", stats->pc_out_of_bounds);
+    printf("  - Unknown op:    %d\n", stats->unknown_opcode);
     printf("\n");
-    printf("Empty programs:    %d\n", stats->empty_programs);
+    printf("Other:\n");
+    printf("  - Empty programs:%d\n", stats->empty_programs);
+    printf("  - Alloc failures:%d\n", stats->alloc_failures);
+    printf("  - IO errors:     %d\n", stats->io_errors);
+    printf("  - Timeouts:      %d\n", stats->timeout_errors);
+    printf("\n");
+    printf("Totals check:      %d\n",
+           stats->successful_runs + stats->crashes + stats->hangs +
+           stats->asm_errors + stats->vm_errors + 
+           stats->empty_programs + stats->alloc_failures +
+           stats->io_errors + stats->timeout_errors);
     printf("========================================\n");
 }
 
@@ -864,7 +1011,8 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         max_iterations = atoi(argv[1]);
     }
-
+    memset(cov_sig_table, 0, sizeof(cov_sig_table));
+    memset(cov_sig_seen, 0, sizeof(cov_sig_seen));
     printf("🐛 Stack VM Fuzzer (Edge Coverage)\n");
     printf("===================================\n");
     printf("Max iterations: %d\n", max_iterations);
@@ -985,12 +1133,9 @@ int main(int argc, char** argv) {
                     mut = 0;
                     break;
             }
-            bool skip_mutation = (argc > 2 && strcmp(argv[2], "--no-mutate") == 0);
             tier_used[tier] = 1;
       //debug for mutation (int overflow crash)
-            if(!skip_mutation){
             apply_mutation_tier(test_buf, tier, mut);
-            }
         }
         for (int t = 0; t < NUM_TIERS; t++) {
             if (tier_used[t]) tier_counts[t]++;
