@@ -96,11 +96,11 @@ void state_update_asm_error(State *s, Errors err){
   s->asm_error_onehot[err] = 1.0f;
 }
 
-void state_update_run_stats(State *s, uint32_t vm_cov, uint32_t asm_cov, int crashes){
+void state_update_run_stats(State *s, uint32_t vm_cov, int crashes){
   //crashes and coverage delta 
   if(!s) return;
   s->crashes = (float)crashes;
-  s->coverage_delta = (float)vm_cov + (float)asm_cov;
+  s->coverage_delta = (float)vm_cov;
 }
 
 void state_reset(State *s){

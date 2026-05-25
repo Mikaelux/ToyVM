@@ -38,7 +38,7 @@ void state_update_num_features(State *s, int t_prog_size, Instr* t_prog); //acco
 
 void state_update_vm_error(State *s, Errors err);
 void state_update_asm_error(State *s, Errors err);
-void state_update_run_stats(State *s, uint32_t vm_cov, uint32_t asm_cov, int crashes); //accounts for coverage and crashes 
+void state_update_run_stats(State *s, uint32_t vm_cov, int crashes); //accounts for coverage and crashes 
 
 void state_reset(State *s);
 void state_serialize(State* s, float* out_vector);

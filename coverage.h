@@ -11,20 +11,19 @@
 //Coverage-related
 
 #define VM_COVERAGE_MAP_SIZE 4096
-#define ASM_COVERAGE_MAP_SIZE 4096
 
 extern uint8_t *vm_coverage_map;
-extern uint8_t *asm_coverage_map;
 
 extern uint32_t __prev_vm_loc;
-extern uint32_t __prev_asm_loc;
 
-static inline uint32_t hash_edge(uint32_t prev, uint32_t cur) {
-    uint32_t x = cur ^ (prev >> 1);
-    x ^= x >> 4;
-    x ^= x << 10;
-    x ^= x >> 7;
-    return x;
+static inline uint32_t hash_edge(uint32_t prev, uint32_t cur) { //murmur hash
+    uint32_t h = prev ^ (cur * 2654435761u);
+    h ^= h >> 16;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return h;
 }
 
 static inline void record_vm(uint32_t loc){
@@ -33,19 +32,11 @@ static inline void record_vm(uint32_t loc){
   __prev_vm_loc = loc >> 1;
 }
 
-static inline void record_asm(uint32_t loc){
-  uint32_t edge = hash_edge(__prev_asm_loc, loc) % ASM_COVERAGE_MAP_SIZE;
-  asm_coverage_map[edge]++;
-  __prev_asm_loc = loc >> 1;
-}
 
 void vm_coverage_reset();
 void vm_coverage_write(const char* path);
 uint32_t vm_coverage_count_bits();
 
-void asm_coverage_reset();
-void asm_coverage_write(const char* path);
-uint32_t asm_coverage_count_bits();
 
 
 
