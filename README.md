@@ -18,3 +18,6 @@ Planning project architecture extensively on paper: Continuously adding ideas or
 ## Might Revisit to:
  - Make the assembler more modular and separate functions in a cleaner way.
  - Rework the entire VM core so results can be more relevant (Memory is an important step here, but any updates would need a full rework of the entire project, hence needing to fix modularity first)
+
+## Next up:
+- Building a C library for ANSI escape codes for visual result tracking.
