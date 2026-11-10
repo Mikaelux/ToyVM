@@ -116,7 +116,7 @@ class CriticNetwork(nn.Module):
 class PPOAgent:
     def __init__(self, state_dim):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info(f"Using device: {self.device}")
+        logger.info("\x1b[2;33;40m" + f"Using device: {self.device}" + "\x1b[0m")
 
         self.actor = ActorNetwork(state_dim).to(self.device)
         self.critic = CriticNetwork(state_dim).to(self.device)
@@ -299,7 +299,7 @@ class PPOAgent:
                 "actor_opt": self.actor_opt.state_dict(),
                 "critic_opt": self.critic_opt.state_dict(),
             }, path)
-        logger.info(f"Saved model to {path}")
+        logger.info("\x1b[1;36;40m" +  f"Saved model to {path}" + "\x1b[0m")
 
     def load(self, path=MODEL_PATH):
         if os.path.exists(path):
@@ -308,7 +308,7 @@ class PPOAgent:
             self.critic.load_state_dict(ckpt["critic"])
             self.actor_opt.load_state_dict(ckpt["actor_opt"])
             self.critic_opt.load_state_dict(ckpt["critic_opt"])
-            logger.info(f"Loaded PPO model from {path}")
+            logger.info("\x1b[1;36;40m" +  f"Loaded PPO model from {path}"+ "\x1b[0m")
             return True
         return False
 
@@ -333,10 +333,10 @@ if os.path.exists(SOCKET_PATH):
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(SOCKET_PATH)
 server.listen(1)
-logger.info(" PPO server waiting for fuzzer")
+logger.info("\x1b[1;32;40"+ "PPO server waiting for fuzzer"+ "\x1b[0m")
 
 conn, _ = server.accept()
-logger.info(" Fuzzer connected")
+logger.info("\x1b[1;32;42"+ " Fuzzer connected" + "\x1b[0m")
 
 
 def recv_msg():
@@ -429,7 +429,7 @@ try:
                 episode_reward = 0.0
 
 except KeyboardInterrupt:
-    logger.info("\n Interrupted")
+    logger.info("\n" + "\x1b[1;31;40m" + "Interrupted" + "\x1b[0m" )
 
 finally:
     agent.save()
@@ -437,4 +437,4 @@ finally:
     server.close()
     if os.path.exists(SOCKET_PATH):
         os.remove(SOCKET_PATH)
-    logger.info(" Shutdown complete")
+    logger.info("\x1b[1;32;40m" " Shutdown complete" + "\x1b[0m" )
