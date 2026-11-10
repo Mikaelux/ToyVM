@@ -299,7 +299,7 @@ class PPOAgent:
                 "actor_opt": self.actor_opt.state_dict(),
                 "critic_opt": self.critic_opt.state_dict(),
             }, path)
-        logger.info(f"✅ Saved model to {path}")
+        logger.info(f"Saved model to {path}")
 
     def load(self, path=MODEL_PATH):
         if os.path.exists(path):
@@ -308,7 +308,7 @@ class PPOAgent:
             self.critic.load_state_dict(ckpt["critic"])
             self.actor_opt.load_state_dict(ckpt["actor_opt"])
             self.critic_opt.load_state_dict(ckpt["critic_opt"])
-            logger.info(f"✅ Loaded PPO model from {path}")
+            logger.info(f"Loaded PPO model from {path}")
             return True
         return False
 
@@ -333,10 +333,10 @@ if os.path.exists(SOCKET_PATH):
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(SOCKET_PATH)
 server.listen(1)
-logger.info("🐍 PPO server waiting for fuzzer...")
+logger.info(" PPO server waiting for fuzzer")
 
 conn, _ = server.accept()
-logger.info("✅ Fuzzer connected")
+logger.info(" Fuzzer connected")
 
 
 def recv_msg():
@@ -429,7 +429,7 @@ try:
                 episode_reward = 0.0
 
 except KeyboardInterrupt:
-    logger.info("\n⛔ Interrupted")
+    logger.info("\n Interrupted")
 
 finally:
     agent.save()
@@ -437,4 +437,4 @@ finally:
     server.close()
     if os.path.exists(SOCKET_PATH):
         os.remove(SOCKET_PATH)
-    logger.info("✅ Shutdown complete")
+    logger.info(" Shutdown complete")
